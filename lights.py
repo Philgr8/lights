@@ -375,52 +375,75 @@ def tick(dry: bool) -> int:
         if not a.startswith(a.split("/")[1]):
             log(f"sources disagree for {d}: {a}; " + ", ".join(f"{n}={describe(r[d])}" for n, r in res.items() if d in r))
 
-    # nuc was down (power cut on our side, no UPS): say so once it is back
+    # Everything one tick has to say goes out as ONE message (owner 8 Nov 2026: three separate messages
+    # 'back' + 'schedule changed' + 'morning summary' in one tick was noise). Parts are (key, text); the keys
+    # and the new schedule are committed only if that one send succeeds, so a failed send retries whole.
+    parts: list[tuple[str, str]] = []
+
+    def add(key: str, text: str) -> None:
+        if key not in st["sent"] and all(k != key for k, _ in parts):
+            parts.append((key, text))
+
+    # the runner was down (nuc power cut, or GitHub cron skipped ticks): say so once it is back
     last = st.get("last_tick")
     if last and t - dt.datetime.fromisoformat(last) > dt.timedelta(minutes=GAP_MIN):
-        once(st, f"back:{last}", f"🔁 {HOST} снова в сети (не работал с {dt.datetime.fromisoformat(last):%H:%M}). "
-             + next_outage_line({**st["sched"], **cons}, t), dry)
+        add(f"back:{last}", f"🔁 {HOST} снова в сети (не работал с {dt.datetime.fromisoformat(last):%H:%M}). "
+            + next_outage_line({**st["sched"], **cons}, t))
 
     first_run = not st["sched"]
+    upd, changed = {}, {}   # date -> new slots; date -> (was_published_before, key)
     for d in (today.isoformat(), tomorrow.isoformat()):
         new, old = cons.get(d), st["sched"].get(d)
-        if not new or new == old:
+        if new and new != old:
+            upd[d] = new
+            changed[d] = (old is not None, f"chg:{d}:{hashlib.sha1(new.encode()).hexdigest()[:10]}")
+    sched = {**st["sched"], **upd}
+
+    def head(d: dt.date, label: str) -> str:
+        return label + (" (изменился)" if changed.get(d.isoformat(), (False,))[0] else "") + ":"
+
+    # morning summary (first tick after 09:00; catches up if 09:00 was dark) or evening one (owner 7 Nov: 20:00)
+    summary, covered = None, set()
+    td, tm = sched.get(today.isoformat()), sched.get(tomorrow.isoformat())
+    if t.time() >= MORNING and t.hour < 13 and f"morning:{today}" not in st["sent"]:
+        lines = [head(today, f"☀️ Сегодня {today:%d.%m} ({q})"), column(td) if td else "график не опубликован"]
+        if tm:
+            lines += [head(tomorrow, f"Завтра {tomorrow:%d.%m}"), column(tm)]
+        summary, covered = (f"morning:{today}", "\n".join(lines)), {today.isoformat(), tomorrow.isoformat()}
+    elif t.time() >= EVENING and f"evening:{today}" not in st["sent"]:
+        lines = [f"🌙 Вечер {today:%d.%m} ({q}). " + next_outage_line(sched, t),
+                 head(tomorrow, f"Завтра {tomorrow:%d.%m}"), column(tm) if tm else "график ещё не опубликован"]
+        summary, covered = (f"evening:{today}", "\n".join(lines)), {tomorrow.isoformat()}
+
+    # schedule changes not already shown inside the summary
+    for d, (was, key) in changed.items():
+        if d in covered:
+            parts.append((key, ""))   # shown in the summary; key still recorded
             continue
-        h = hashlib.sha1(new.encode()).hexdigest()[:10]
         lbl = day_label(d, today)
-        if old is None:
-            text = f"📅 График на {lbl} ({q}):\n{column(new)}"
-        else:
-            text = f"⚠️ Изменился график на {lbl} ({q}):\n{column(new)}"
         if first_run and d == today.isoformat():
-            text = f"✅ Слежу за светом ({q}, Чорноморськ). На {lbl}:\n{column(new)}"
-        if send(st, text, dry):
-            st["sent"][f"chg:{d}:{h}"] = t.isoformat(timespec="seconds")
-            st["sched"][d] = new
+            add(key, f"✅ Слежу за светом ({q}, Чорноморськ). На {lbl}:\n{column(upd[d])}")
+        elif was:
+            add(key, f"⚠️ Изменился график на {lbl} ({q}):\n{column(upd[d])}")
+        else:
+            add(key, f"📅 График на {lbl} ({q}):\n{column(upd[d])}")
 
     # reminders before an outage and before power returns
-    for a, b in abs_outages(st["sched"], today):
+    for a, b in abs_outages(sched, today):
         to_a, to_b = (a - t).total_seconds() / 60, (b - t).total_seconds() / 60
         if 0 < to_a <= WARN_OFF_MIN:
-            once(st, f"off:{a:%F %H:%M}", f"🔌 Через {round(to_a)} мин отключение: {a:%H:%M}-{b:%H:%M}, вернут в {b:%H:%M}.", dry)
+            add(f"off:{a:%F %H:%M}", f"🔌 Через {round(to_a)} мин отключение: {a:%H:%M}-{b:%H:%M}, вернут в {b:%H:%M}.")
         if a <= t and 0 < to_b <= WARN_ON_MIN:
-            once(st, f"on:{b:%F %H:%M}", f"💡 Свет должны вернуть в {b:%H:%M} (через {round(to_b)} мин). "
-                 + next_outage_line(st["sched"], b + dt.timedelta(minutes=1)), dry)
+            add(f"on:{b:%F %H:%M}", f"💡 Свет должны вернуть в {b:%H:%M} (через {round(to_b)} мин). "
+                + next_outage_line(sched, b + dt.timedelta(minutes=1)))
 
-    # morning summary (first tick after 09:00; catches up if 09:00 was dark)
-    if t.time() >= MORNING and t.hour < 13:
-        td, tm = st["sched"].get(today.isoformat()), st["sched"].get(tomorrow.isoformat())
-        text = f"☀️ Сегодня {today:%d.%m} ({q}): " + (describe(td) if td else "график не опубликован") + "."
-        if tm:
-            text += f" Завтра: {describe(tm)}."
-        once(st, f"morning:{today}", text, dry)
-
-    # evening summary (owner 7 Nov 2026: 20:00): rest of tonight + tomorrow
-    if t.time() >= EVENING:
-        td, tm = st["sched"].get(today.isoformat()), st["sched"].get(tomorrow.isoformat())
-        text = f"🌙 Вечер {today:%d.%m} ({q}). " + next_outage_line(st["sched"], t)
-        text += f" Завтра {tomorrow:%d.%m}: " + (describe(tm) if tm else "график ещё не опубликован") + "."
-        once(st, f"evening:{today}", text, dry)
+    if summary:
+        add(*summary)
+    text = "\n\n".join(x for _, x in parts if x)
+    if not text or send(st, text, dry):
+        for k, _ in parts:
+            st["sent"][k] = t.isoformat(timespec="seconds")
+        st["sched"].update(upd)
 
     # keep state small
     keep = {(today + dt.timedelta(days=k)).isoformat() for k in (-1, 0, 1)}
