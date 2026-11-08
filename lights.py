@@ -29,8 +29,8 @@ STATE_DIR = Path(os.getenv("LIGHTS_STATE", str(Path.home() / ".local/state/light
 STATE = STATE_DIR / "state.json"
 LOG = STATE_DIR / "lights.log"
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
-WARN_OFF_MIN = 30     # reminder before an outage
-WARN_ON_MIN = 30      # reminder before power returns (>= TICK_MIN or it is skipped)
+WARN_OFF_MIN = 45     # reminder before an outage (owner 8 Nov 2026: 45, ticks at :15/:45 so GitHub cron lag up to ~30 min still hits it)
+WARN_ON_MIN = 45      # reminder before power returns (>= TICK_MIN or it is skipped; 45 with WARN_OFF_MIN)
 GAP_MIN = 70          # tick gap that means the nuc itself was down (> 2 ticks)
 TICK_MIN = 30         # lights.timer period (owner 7 Nov 2026: 30 min, was 5)
 HOST = os.getenv("LIGHTS_HOST", "Nuc")  # who runs the ticks: Nuc (systemd) or GitHub (Actions cron, owner 8 Nov 2026)
