@@ -1,9 +1,9 @@
 [Unit]
-Description=Lights fallback check every 15 minutes
+Description=Lights fallback check twice an hour (:20/:50, 5 min after the cloud slots)
 
 [Timer]
 OnBootSec=3min
-OnCalendar=*:05/15
+OnCalendar=*:20,50
 Persistent=true
 
 [Install]
