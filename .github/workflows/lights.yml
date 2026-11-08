@@ -30,7 +30,6 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_GROUP_CHAT_ID: ${{ secrets.TELEGRAM_GROUP_CHAT_ID }}
           LIGHTS_QUEUE: "1.1"
-          LIGHTS_HOST: GitHub
           LIGHTS_STATE: ${{ github.workspace }}/state
         run: python3 -I lights.py "${{ inputs.cmd || 'tick' }}"
       - name: save state

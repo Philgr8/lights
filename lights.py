@@ -31,9 +31,7 @@ LOG = STATE_DIR / "lights.log"
 UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 WARN_OFF_MIN = 45     # reminder before an outage (owner 8 Nov 2026: 45, ticks at :15/:45 so GitHub cron lag up to ~30 min still hits it)
 WARN_ON_MIN = 45      # reminder before power returns (>= TICK_MIN or it is skipped; 45 with WARN_OFF_MIN)
-GAP_MIN = 70          # tick gap that means the nuc itself was down (> 2 ticks)
 TICK_MIN = 30         # lights.timer period (owner 7 Nov 2026: 30 min, was 5)
-HOST = os.getenv("LIGHTS_HOST", "Nuc")  # who runs the ticks: Nuc (systemd) or GitHub (Actions cron, owner 8 Nov 2026)
 MORNING = dt.time(9, 0)
 EVENING = dt.time(20, 0)
 FAIL_ALERT = 3        # consecutive all-source failures before one alert
@@ -336,13 +334,19 @@ def day_label(d: str, today: dt.date) -> str:
     return f"{word} {dd:%d.%m}".strip()
 
 
+def span(a: dt.datetime, b: dt.datetime) -> str:
+    """'23:00-24:00' like column(), not '23:00-00:00', when the outage ends at midnight."""
+    end = "24:00" if b.time() == dt.time(0) and b.date() > a.date() else f"{b:%H:%M}"
+    return f"{a:%H:%M}-{end}"
+
+
 def next_outage_line(sched: dict, t: dt.datetime) -> str:
     for a, b in abs_outages(sched, t.date()):
         if a <= t < b:
             return f"По графику сейчас света нет, вернут в {b:%H:%M}."
         if a > t:
             when = "" if a.date() == t.date() else " завтра"
-            return f"Следующее отключение{when} {a:%H:%M}-{b:%H:%M}."
+            return f"Следующее отключение{when} {span(a, b)}."
     return "Отключений по графику больше нет."
 
 
@@ -375,21 +379,13 @@ def tick(dry: bool) -> int:
         if not a.startswith(a.split("/")[1]):
             log(f"sources disagree for {d}: {a}; " + ", ".join(f"{n}={describe(r[d])}" for n, r in res.items() if d in r))
 
-    # Everything one tick has to say goes out as ONE message (owner 8 Nov 2026: three separate messages
-    # 'back' + 'schedule changed' + 'morning summary' in one tick was noise). Parts are (key, text); the keys
-    # and the new schedule are committed only if that one send succeeds, so a failed send retries whole.
-    parts: list[tuple[str, str]] = []
-
-    def add(key: str, text: str) -> None:
-        if key not in st["sent"] and all(k != key for k, _ in parts):
-            parts.append((key, text))
-
-    # the runner was down (nuc power cut, or GitHub cron skipped ticks): say so once it is back
-    last = st.get("last_tick")
-    if last and t - dt.datetime.fromisoformat(last) > dt.timedelta(minutes=GAP_MIN):
-        add(f"back:{last}", f"🔁 {HOST} снова в сети (не работал с {dt.datetime.fromisoformat(last):%H:%M}). "
-            + next_outage_line({**st["sched"], **cons}, t))
-
+    # Message layout (owner 8 Nov 2026, after two corrections):
+    #  - at most ONE schedule message per tick: a change (⚠️, full schedule of both days) replaces the
+    #    morning/evening summary of that tick; day blocks are '☀️ Сегодня 08.11:' + one interval per line,
+    #    separated by a blank line; no totals, no 'next outage' line (it repeats the list);
+    #  - reminders (🔌 / 💡) go as their own message;
+    #  - no 'runner back online' message (owner: useless). Keys and the new schedule are committed only
+    #    after a successful send, so a failed send retries whole next tick.
     first_run = not st["sched"]
     upd, changed = {}, {}   # date -> new slots; date -> (was_published_before, key)
     for d in (today.isoformat(), tomorrow.isoformat()):
@@ -399,51 +395,54 @@ def tick(dry: bool) -> int:
             changed[d] = (old is not None, f"chg:{d}:{hashlib.sha1(new.encode()).hexdigest()[:10]}")
     sched = {**st["sched"], **upd}
 
-    def head(d: dt.date, label: str) -> str:
-        return label + (" (изменился)" if changed.get(d.isoformat(), (False,))[0] else "") + ":"
-
-    # morning summary (first tick after 09:00; catches up if 09:00 was dark) or evening one (owner 7 Nov: 20:00)
-    summary, covered = None, set()
     td, tm = sched.get(today.isoformat()), sched.get(tomorrow.isoformat())
-    if t.time() >= MORNING and t.hour < 13 and f"morning:{today}" not in st["sent"]:
-        lines = [head(today, f"☀️ Сегодня {today:%d.%m} ({q})"), column(td) if td else "график не опубликован"]
+
+    def block(d: dt.date, word: str, slots, missing: str, suffix: str = "") -> str:
+        mark = " (изменился)" if changed.get(d.isoformat(), (False,))[0] else ""
+        return f"☀️ {word} {d:%d.%m}{suffix}{mark}:\n" + (column(slots) if slots else missing)
+
+    def both_days(suffix: str = "") -> str:
+        out = [block(today, "Сегодня", td, "график не опубликован", suffix)]
         if tm:
-            lines += [head(tomorrow, f"Завтра {tomorrow:%d.%m}"), column(tm)]
-        summary, covered = (f"morning:{today}", "\n".join(lines)), {today.isoformat(), tomorrow.isoformat()}
-    elif t.time() >= EVENING and f"evening:{today}" not in st["sent"]:
-        lines = [f"🌙 Вечер {today:%d.%m} ({q}). " + next_outage_line(sched, t),
-                 head(tomorrow, f"Завтра {tomorrow:%d.%m}"), column(tm) if tm else "график ещё не опубликован"]
-        summary, covered = (f"evening:{today}", "\n".join(lines)), {tomorrow.isoformat()}
+            out.append(block(tomorrow, "Завтра", tm, ""))
+        return "\n\n".join(out)
 
-    # schedule changes not already shown inside the summary
-    for d, (was, key) in changed.items():
-        if d in covered:
-            parts.append((key, ""))   # shown in the summary; key still recorded
-            continue
-        lbl = day_label(d, today)
-        if first_run and d == today.isoformat():
-            add(key, f"✅ Слежу за светом ({q}, Чорноморськ). На {lbl}:\n{column(upd[d])}")
-        elif was:
-            add(key, f"⚠️ Изменился график на {lbl} ({q}):\n{column(upd[d])}")
+    msg, keys = None, []
+    morning_due = t.time() >= MORNING and t.hour < 13 and f"morning:{today}" not in st["sent"]
+    evening_due = t.time() >= EVENING and f"evening:{today}" not in st["sent"]
+    if changed:
+        if first_run:
+            top = f"✅ Слежу за светом ({q}, Чорноморськ)"
+        elif any(was for was, _ in changed.values()):
+            top = f"⚠️ Изменился график отключений ({q})"
         else:
-            add(key, f"📅 График на {lbl} ({q}):\n{column(upd[d])}")
-
-    # reminders before an outage and before power returns
-    for a, b in abs_outages(sched, today):
-        to_a, to_b = (a - t).total_seconds() / 60, (b - t).total_seconds() / 60
-        if 0 < to_a <= WARN_OFF_MIN:
-            add(f"off:{a:%F %H:%M}", f"🔌 Через {round(to_a)} мин отключение: {a:%H:%M}-{b:%H:%M}, вернут в {b:%H:%M}.")
-        if a <= t and 0 < to_b <= WARN_ON_MIN:
-            add(f"on:{b:%F %H:%M}", f"💡 Свет должны вернуть в {b:%H:%M} (через {round(to_b)} мин). "
-                + next_outage_line(sched, b + dt.timedelta(minutes=1)))
-
-    if summary:
-        add(*summary)
-    text = "\n\n".join(x for _, x in parts if x)
-    if not text or send(st, text, dry):
-        for k, _ in parts:
+            top = f"📅 Опубликован график ({q})"
+        msg = top + "\n\n" + both_days()
+        keys = [k for _, k in changed.values()]
+        keys += [f"morning:{today}"] * morning_due + [f"evening:{today}"] * evening_due  # this replaces the summary
+    elif morning_due:
+        msg, keys = both_days(f" ({q})"), [f"morning:{today}"]
+    elif evening_due:
+        msg = f"🌙 Вечер {today:%d.%m} ({q}). " + next_outage_line(sched, t) + "\n\n" \
+            + block(tomorrow, "Завтра", tm, "график ещё не опубликован")
+        keys = [f"evening:{today}"]
+    if msg is None or send(st, msg, dry):
+        for k in keys:
             st["sent"][k] = t.isoformat(timespec="seconds")
         st["sched"].update(upd)
+
+    # reminders before an outage and before power returns: their own message
+    rem = []
+    for a, b in abs_outages(sched, today):
+        to_a, to_b = (a - t).total_seconds() / 60, (b - t).total_seconds() / 60
+        if 0 < to_a <= WARN_OFF_MIN and f"off:{a:%F %H:%M}" not in st["sent"]:
+            rem.append((f"off:{a:%F %H:%M}", f"🔌 Через {round(to_a)} мин отключение: {span(a, b)}, вернут в {b:%H:%M}."))
+        if a <= t and 0 < to_b <= WARN_ON_MIN and f"on:{b:%F %H:%M}" not in st["sent"]:
+            rem.append((f"on:{b:%F %H:%M}", f"💡 Свет должны вернуть в {b:%H:%M} (через {round(to_b)} мин). "
+                        + next_outage_line(sched, b + dt.timedelta(minutes=1))))
+    if rem and send(st, "\n".join(x for _, x in rem), dry):
+        for k, _ in rem:
+            st["sent"][k] = t.isoformat(timespec="seconds")
 
     # keep state small
     keep = {(today + dt.timedelta(days=k)).isoformat() for k in (-1, 0, 1)}
