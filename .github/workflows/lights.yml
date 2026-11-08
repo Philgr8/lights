@@ -1,0 +1,45 @@
+# Chornomorsk outage watcher (queue 1.1) -> Telegram. Runs in the cloud so it keeps working when the nuc has no power.
+# State (what was already sent) lives on branch lights-state; the job commits it back after every tick.
+name: lights
+on:
+  schedule:
+    - cron: "7,37 * * * *"   # every 30 min, off the top of the hour (GitHub cron may lag 5-20 min)
+  workflow_dispatch:
+    inputs:
+      cmd:
+        type: choice
+        default: tick
+        options: [tick, show, test]
+concurrency:
+  group: lights
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: lights-state
+          path: state
+      - name: run
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_GROUP_CHAT_ID: ${{ secrets.TELEGRAM_GROUP_CHAT_ID }}
+          LIGHTS_QUEUE: "1.1"
+          LIGHTS_HOST: GitHub
+          LIGHTS_STATE: ${{ github.workspace }}/state
+        run: python3 -I lights.py "${{ inputs.cmd || 'tick' }}"
+      - name: save state
+        if: always()
+        working-directory: state
+        run: |
+          tail -n 15 lights.log 2>/dev/null || true
+          git config user.name lights-bot
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          [ -f state.json ] || exit 0
+          git add state.json
+          git diff --cached --quiet || { git commit -qm "state $(date -u +%FT%TZ)"; git push -q origin HEAD:lights-state; }
