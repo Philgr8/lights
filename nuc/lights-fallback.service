@@ -1,0 +1,11 @@
+[Unit]
+Description=Lights watcher fallback: tick on the nuc only when GitHub Actions is silent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/home/i/.claude/secrets/api-keys.env
+Environment=LIGHTS_QUEUE=1.1
+ExecStart=/usr/bin/bash /home/i/Downloads/Projects/lights/nuc/fallback.sh
+TimeoutStartSec=180
