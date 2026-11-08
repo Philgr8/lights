@@ -42,6 +42,7 @@ URLS = {
     "bezsvitla": "https://bezsvitla.com.ua/odeska-oblast/cornomorsk",
     "alerts": "https://alerts.energy/odeska-oblast",
     "svitlo": "https://svitlo.live/chornomorsk",
+    "tg": "https://t.me/s/chornomorsk_svitlo",
 }
 
 
@@ -151,7 +152,40 @@ def parse_svitlo(page: str) -> dict:
     return out
 
 
-PARSERS = {"bezsvitla": parse_bezsvitla, "alerts": parse_alerts, "svitlo": parse_svitlo}
+UA_MONTHS = {m: i for i, m in enumerate(
+    "січня лютого березня квітня травня червня липня серпня вересня жовтня листопада грудня".split(), 1)}
+
+
+def parse_tg(page: str) -> dict:
+    """Public channel t.me/s/chornomorsk_svitlo (web preview, no login), added 8 Nov 2026 (owner).
+    Posts: '... графік відключень ... на 8 листопада' + lines 'з 2:00 до 6:00'. No queue named in posts; checked
+    against our queue 1.1 on 7 and 8 Nov: same intervals, posted 13-20 min before the sites updated.
+    Later posts for the same date ('Оновлення') override earlier ones; the page lists posts oldest first."""
+    out = {}
+    for block in page.split('class="tgme_widget_message_wrap')[1:]:
+        mt = re.search(r'tgme_widget_message_text[^>]*>(.*?)</div>', block, re.S)
+        mp = re.search(r'<time datetime="(\d{4})-(\d\d)', block)
+        if not mt or not mp:
+            continue
+        text = html.unescape(re.sub(r"<[^>]+>", " ", re.sub(r"<br\s*/?>", "\n", mt.group(1))))
+        md = re.search(r"графік відключень.*?на\s+(\d{1,2})\s+([а-яіїє]+)", text, re.S | re.I)
+        if not md or md.group(2).lower() not in UA_MONTHS:
+            continue
+        year, pmonth, month = int(mp.group(1)), int(mp.group(2)), UA_MONTHS[md.group(2).lower()]
+        if pmonth == 12 and month == 1:
+            year += 1
+        s = ["0"] * 48
+        for a_h, a_m, b_h, b_m in re.findall(r"з\s+(\d{1,2}):(\d\d)\s+до\s+(\d{1,2}):(\d\d)", text):
+            a, b = int(a_h) * 2 + int(a_m) // 30, int(b_h) * 2 + int(b_m) // 30
+            if b <= a:  # 'до 0:00' / 'до 24:00' = end of day
+                b = 48
+            for i in range(a, min(b, 48)):
+                s[i] = "1"
+        out[dt.date(year, month, int(md.group(1))).isoformat()] = "".join(s)
+    return out
+
+
+PARSERS = {"bezsvitla": parse_bezsvitla, "alerts": parse_alerts, "svitlo": parse_svitlo, "tg": parse_tg}
 
 
 def fetch_all() -> tuple[dict, dict]:
@@ -175,7 +209,11 @@ def consensus(res: dict) -> tuple[dict, dict]:
             pick = res.get("alerts", {}).get(d) or res.get("bezsvitla", {}).get(d) or vals[0]
             out[d] = pick
         else:
-            out[d] = "".join(max("01", key=lambda c: sum(v[i] == c for v in vals)) for i in range(48))
+            # majority per slot; a tie (2 of 4 since the tg source, 8 Nov 2026) goes to alerts, else bezsvitla
+            ref = res.get("alerts", {}).get(d) or res.get("bezsvitla", {}).get(d) or vals[0]
+            ones = [sum(v[i] == "1" for v in vals) for i in range(48)]
+            out[d] = "".join("1" if 2 * n > len(vals) else "0" if 2 * n < len(vals) else ref[i]
+                             for i, n in enumerate(ones))
         agree[d] = f"{sum(v == out[d] for v in vals)}/{len(vals)}"
     return out, agree
 
