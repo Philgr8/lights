@@ -313,7 +313,8 @@ def send(st: dict, text: str, dry: bool) -> bool:
         log("no chat id; run `lights.py chatid` after /start")
         return False
     try:
-        ok = tg("sendMessage", chat_id=chat, text=text, disable_web_page_preview="true").get("ok", False)
+        kb = json.dumps({"inline_keyboard": [[{"text": "🔄 Обновить график", "callback_data": "refresh"}]]})
+        ok = tg("sendMessage", chat_id=chat, text=text, disable_web_page_preview="true", reply_markup=kb).get("ok", False)
     except Exception as e:
         log(f"send failed: {type(e).__name__}")
         return False
@@ -468,6 +469,17 @@ def show() -> int:
     return 0 if cons else 1
 
 
+def refresh() -> int:
+    """Button press: send the current consensus schedule to the group, no dedupe."""
+    res, _ = fetch_all()
+    cons, _ = consensus(res)
+    if not cons:
+        send(load(), "⚠️ Не удалось получить график, попробуйте позже.", False)
+        return 1
+    lines = [f"📅 {d}\n{column(s)}" for d, s in sorted(cons.items())]
+    return 0 if send(load(), "\n\n".join(lines), False) else 1
+
+
 def chatid() -> int:
     st = load()
     ups = tg("getUpdates").get("result", [])
@@ -487,6 +499,8 @@ def main() -> int:
         return tick("--dry" in sys.argv)
     if cmd == "show":
         return show()
+    if cmd == "refresh":
+        return refresh()
     if cmd == "chatid":
         return chatid()
     if cmd == "diag":  # why chatid sees nothing: webhook set, or updates consumed elsewhere; prints no ids
