@@ -476,8 +476,9 @@ def refresh() -> int:
     if not cons:
         send(load(), "⚠️ Не удалось получить график, попробуйте позже.", False)
         return 1
-    lines = [f"📅 {d}\n{column(s)}" for d, s in sorted(cons.items())]
-    return 0 if send(load(), "\n\n".join(lines), False) else 1
+    today = now().date().isoformat()
+    lines = [f"📅 {d}\n{column(s)}" for d, s in sorted(cons.items()) if d >= today]
+    return 0 if send(load(), "\n\n".join(lines) or "Нет данных на сегодня.", False) else 1
 
 
 def chatid() -> int:
