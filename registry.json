@@ -48,7 +48,7 @@
    "merge_window_min": 0,
    "mode": "new",
    "widget": {
-    "label": "P0 alarm",
+    "label": "Тревога P0",
     "height": 260
    }
   },
@@ -62,7 +62,7 @@
    "merge_window_min": 10,
    "mode": "new+panel",
    "widget": {
-    "label": "Lights, queue 1.1",
+    "label": "Свет, очередь 1.1",
     "height": 330
    },
    "note": "schedule change = new sounding message (merged within 10 min); current state = ONE pinned panel edited in place (silent); unchanged tick sends nothing"
@@ -77,7 +77,7 @@
    "merge_window_min": 0,
    "mode": "new",
    "widget": {
-    "label": "Jobs",
+    "label": "Вакансии",
     "height": 300
    },
    "note": "one run = one message listing the new roles; no per-row Apply/Skip"
@@ -92,7 +92,7 @@
    "merge_window_min": 0,
    "mode": "new",
    "widget": {
-    "label": "Wallet",
+    "label": "Кошелёк, движение",
     "height": 233
    },
    "note": "widget only above the holdings.py move threshold; below it nothing is sent"
@@ -107,7 +107,7 @@
    "merge_window_min": 0,
    "mode": "new",
    "widget": {
-    "label": "SMM draft",
+    "label": "Согласование",
     "height": 259
    }
   },
@@ -133,7 +133,7 @@
    "merge_window_min": 5,
    "mode": "new",
    "widget": {
-    "label": "TCB",
+    "label": "TCB, ключевое слово",
     "height": 330
    },
    "note": "matches within 5 min = one message"
@@ -148,7 +148,7 @@
    "merge_window_min": 0,
    "mode": "new",
    "widget": {
-    "label": "Heuristics",
+    "label": "Эвристики, запуск",
     "height": 262
    }
   },
@@ -162,7 +162,7 @@
    "merge_window_min": 0,
    "mode": "panel",
    "widget": {
-    "label": "Owner queue",
+    "label": "Очередь владельца",
     "height": 300
    }
   },
@@ -176,7 +176,7 @@
    "merge_window_min": 0,
    "mode": "new",
    "widget": {
-    "label": "Sensor",
+    "label": "Датчики, проверка",
     "height": 243
    }
   }

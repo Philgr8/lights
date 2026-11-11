@@ -298,40 +298,38 @@ def _bars(sched: dict, d: dt.date) -> list:
     return [[a / 2, b / 2, "r"] for a, b in intervals(sched[d.isoformat()])] if d.isoformat() in sched else []
 
 
-def panel_data(sched: dict, t: dt.datetime, head: str = "") -> dict:
-    """Pinned live panel (registry 'lights', widget kit keys): state chip, next outage, today/tomorrow timeline."""
+def std_data(chip: list, days: list, note: str = "", x: bool = False) -> dict:
+    """THE one message layout (owner 11 Nov 2026): title 'Свет, очередь N' + status, then per day the date
+    (dd.mm) and one interval per line; days separated by a blank line; an optional note line on top."""
+    blocks = []
+    for d, slots in days:
+        iv = column(slots) if slots else "график не опубликован"
+        blocks.append(d[8:10] + "." + d[5:7] + "\n" + iv)
+    body = "\n\n".join(blocks)
+    out = {"f": f"Свет, очередь {QUEUE}", "c": chip, "w": (note + "\n\n" if note and body else note) + body}
+    if x:
+        out["x"] = [["Обновить", "lt:rf", "s"]]
+    return out
+
+
+def panel_data(sched: dict, t: dt.datetime, note: str = "") -> dict:
+    """Pinned live panel: state chip + today (and tomorrow) in the standard layout."""
     today, tm = t.date(), t.date() + dt.timedelta(days=1)
-    nxt = next_outage_line(sched, t)
     off_now = any(a <= t < b for a, b in abs_outages(sched, today))
     soon = [(a - t).total_seconds() / 60 for a, b in abs_outages(sched, today) if t < a]
     if off_now:
-        chip = ["r", "OFF"]
+        chip = ["r", "света нет"]
     elif soon and min(soon) <= WARN_OFF_MIN:
-        chip = ["a", f"OFF IN {round(min(soon))}m"]
+        chip = ["a", f"отключение через {round(min(soon))} мин"]
     else:
-        chip = ["g", "ON"]
-    rows = [[f"Today {today:%d.%m}", "", _bars(sched, today), round(t.hour + t.minute / 60, 2)]]
-    if tm.isoformat() in sched:
-        rows.append([f"Tomorrow {tm:%d.%m}", "", _bars(sched, tm)])
-    return {"f": f"Lights, queue {QUEUE}", "c": chip, "a": f"{t:%H:%M}", "bg": 1, "h": head or nxt[:80], "t": rows,
-            "x": [["Refresh chart", "lt:rf", "s"]]}
+        chip = ["g", "свет есть"]
+    days = [(d.isoformat(), sched[d.isoformat()]) for d in (today, tm) if d.isoformat() in sched]
+    return std_data(chip, days, note, x=True)
 
 
 def change_data(chg: dict, t: dt.datetime) -> dict:
-    """Schedule-change message: was / now / added for each changed day, timeline of the new schedule."""
-    k, rows = [], []
-    for d, (was, new) in sorted(chg.items()):
-        lab = d[8:10] + "." + d[5:7]
-        if was is not None and was != new:
-            k += [[f"Was {lab}", column(was).replace("\n", ", ")], [f"Now {lab}", column(new).replace("\n", ", ")]]
-            add = "".join("1" if x == "1" and w != "1" else "0" for x, w in zip(new, was))
-            if "1" in add:
-                k.append([f"Added {lab}", column(add).replace("\n", ", ")])
-        elif was is None:
-            k.append([f"New {lab}", column(new).replace("\n", ", ")])
-        rows.append([f"{lab}", f"changed {t:%H:%M}", [[a / 2, b / 2, "r"] for a, b in intervals(new)]])
-    return {"f": f"Lights, queue {QUEUE}", "c": ["r", "CHANGED"], "a": f"{t:%H:%M}", "h": "Schedule changed",
-            "k": k[:6], "t": rows[:2], "x": [["Refresh chart", "lt:rf", "s"]]}
+    """Schedule-change message: the new schedule of each changed day."""
+    return std_data(["r", "изменения"], [(d, new) for d, (was, new) in sorted(chg.items())])
 
 
 def send(st: dict, text: str, dry: bool, data: dict | None = None, sound: bool = False) -> bool:
@@ -341,9 +339,9 @@ def send(st: dict, text: str, dry: bool, data: dict | None = None, sound: bool =
         log(f"dry: {text[:80]!r}")
         return True
     if data is None:
-        data = {"f": f"Lights, queue {QUEUE}", "c": ["a", "INFO"], "a": f"{now():%H:%M}", "h": text[:80]}
+        data = {"f": f"Свет, очередь {QUEUE}", "c": ["b", ""], "w": text}
     try:
-        r = _sink().send("lights", data, text.split("\n")[0][:200], state_dir=STATE_DIR, mode="" if sound else "panel")
+        r = _sink().send("lights", data, "", state_dir=STATE_DIR, mode="" if sound else "panel")
     except Exception as e:
         log(f"send failed: {type(e).__name__}: {str(e)[:120]}")
         return False
@@ -399,9 +397,7 @@ def tick(dry: bool) -> int:
     if not any(res.values()):
         st["fail"] += 1
         if st["fail"] == FAIL_ALERT:
-            send(st, f"❓ Ни один сайт с графиком не отвечает {st['fail'] * TICK_MIN} мин; проверю дальше.", dry,
-                 {"f": f"Lights, queue {QUEUE}", "c": ["a", "NO DATA"], "a": f"{t:%H:%M}",
-                  "h": f"No schedule source answers for {st['fail'] * TICK_MIN} min"})
+            send(st, "", dry, std_data(["a", "нет данных"], [], f"Ни один сайт с графиком не отвечает {st['fail'] * TICK_MIN} мин"))
         st["last_tick"] = t.isoformat(timespec="seconds")
         if not dry:
             save(st)
@@ -464,11 +460,10 @@ def tick(dry: bool) -> int:
     if msg is None:
         ok = True
     elif sounding:   # a schedule change: a NEW sounding message, then the pinned panel follows silently
-        ok = send(st, msg, dry, change_data(chg, t), sound=True)
-        if ok:
-            send(st, msg, dry, panel_data(sched, t, "Schedule changed " + f"{t:%H:%M}"))
+        cdata = change_data(chg, t)
+        ok = send(st, "", dry, cdata, sound=True)   # ONE message (owner 11 Nov); the pinned panel refreshes silently on the next tick
     else:
-        ok = send(st, msg, dry, panel_data(sched, t, msg.split("\n")[0][:80]))
+        ok = send(st, msg, dry, panel_data(sched, t))
     if ok:
         for k in keys:
             st["sent"][k] = t.isoformat(timespec="seconds")
@@ -483,7 +478,7 @@ def tick(dry: bool) -> int:
         if a <= t and 0 < to_b <= WARN_ON_MIN and f"on:{b:%F %H:%M}" not in st["sent"]:
             rem.append((f"on:{b:%F %H:%M}", f"💡 Свет должны вернуть в {b:%H:%M} (через {round(to_b)} мин). "
                         + next_outage_line(sched, b + dt.timedelta(minutes=1))))
-    if rem and send(st, "\n".join(x for _, x in rem), dry, panel_data(sched, t, rem[0][1][:80])):
+    if rem and send(st, "\n".join(x for _, x in rem), dry, panel_data(sched, t, "\n".join(x for _, x in rem))):
         for k, _ in rem:
             st["sent"][k] = t.isoformat(timespec="seconds")
 
@@ -516,11 +511,11 @@ def refresh() -> int:
     res, _ = fetch_all()
     cons, _ = consensus(res)
     if not cons:
-        send(load(), "Could not fetch the schedule, try later.", False)
+        send(load(), "Не удалось получить график, попробуйте позже.", False)
         return 1
     today = now().date().isoformat()
-    lines = [f"{d}\n{column(s)}" for d, s in sorted(cons.items()) if d >= today]
-    return 0 if send(load(), "\n\n".join(lines) or "No data for today.", False) else 1
+    days = [(d, v) for d, v in sorted(cons.items()) if d >= today]
+    return 0 if send(load(), "", False, std_data(["b", "график"], days) if days else {"f": f"Свет, очередь {QUEUE}", "c": ["a", "нет данных"], "w": "Нет данных на сегодня"}) else 1
 
 
 def main() -> int:
@@ -535,7 +530,7 @@ def main() -> int:
         sys.exit("[FATAL] chatid retired (MP-1337): the sink sends to TELEGRAM_OWNER_CHAT_ID")
     if cmd == "test":
         st = load()
-        return 0 if send(st, f"Test: lights bot is up ({now():%H:%M} Kyiv).", False) else 1
+        return 0 if send(st, f"Проверка: бот света работает ({now():%H:%M} Киев).", False) else 1
     print(__doc__)
     return 2
 

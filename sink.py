@@ -193,6 +193,17 @@ def render_of(reg: dict, f: dict) -> str:
     return r if r in ("text", "widget") else "text"
 
 
+def now_hm() -> str:
+    """Time for line 1 of every message: HH:MM Kyiv (owner standard 11 Nov 2026)."""
+    return dt.datetime.now(KYIV).strftime("%H:%M")
+
+
+def ru_n(n: int, one: str, few: str, many: str) -> str:
+    """Russian plural: 1 совпадение, 2 совпадения, 5 совпадений."""
+    n10, n100 = abs(n) % 10, abs(n) % 100
+    return one if n10 == 1 and n100 != 11 else few if 2 <= n10 <= 4 and not 12 <= n100 <= 14 else many
+
+
 def _esc(x) -> str:
     return html.escape(str(x), quote=False)
 
@@ -205,7 +216,7 @@ def callback_data(req: str) -> str:
 
 
 def render_text(f: dict, d: dict, caption: str, preview: bool) -> tuple[str, dict | None]:
-    """The widget fields as an HTML message, same fields and order as the mockups: title + chip, headline h,
+    """The widget fields as an HTML message, same fields and order as the mockups: chip + bold title + status word + time, headline h,
     sub-line w, body u, key rows k, list rows l, timeline rows t; buttons as one inline keyboard."""
     chip = d.get("c") or ["b", ""]
     out = []
@@ -223,10 +234,9 @@ def render_text(f: dict, d: dict, caption: str, preview: bool) -> tuple[str, dic
     for r in d.get("l") or []:
         out.append(f"{CHIP.get(r[0], '-')} {_esc(r[1])}" + (f"  <i>{_esc(r[2])}</i>" if len(r) > 2 and r[2] else ""))
     for t in d.get("t") or []:
-        bars = ", ".join(f"{int(a):02d}:{int(a % 1 * 60):02d}-{int(b):02d}:{int(b % 1 * 60):02d}" for a, b, *_ in t[2]) or "no outages"
+        bars = ", ".join(f"{int(a):02d}:{int(a % 1 * 60):02d}-{int(b):02d}:{int(b % 1 * 60):02d}" for a, b, *_ in t[2]) or "без отключений"
         out.append(f"{_esc(t[0])}: {bars}" + (f"  <i>{_esc(t[1])}</i>" if t[1] else ""))
-    if caption and caption.strip() != (d.get("h") or "").strip():
-        out.append(f"<i>{_esc(caption)}</i>")
+    # the caption is widget-mode only: in text mode it repeated the headline (owner standard 11 Nov 2026: no duplicate caption)
     kb, row = [], []
     for b in d.get("x") or []:
         btn = {"text": str(b[0])[:30]}
@@ -257,8 +267,8 @@ def _merge(rid: str, prev: dict, new: dict) -> dict:
         out["l"] = ((prev.get("l") or []) + (new.get("l") or []))[-4:]
         n = int(prev.get("n", 1)) + 1
         out["n"] = n
-        out["c"] = ["r", f"{n} MATCHES"]
-        out["h"] = f"{n} matches in 5 min"
+        out["c"] = ["a", f"{n} " + ru_n(n, "совпадение", "совпадения", "совпадений")]
+        out["h"] = f"{n} " + ru_n(n, "совпадение", "совпадения", "совпадений") + " за 5 минут"
         return out
     return new  # lights: the later schedule replaces the earlier one inside the window
 
@@ -275,8 +285,30 @@ def _mirror(reg: dict, caption: str) -> None:
         pass
 
 
+def extra_chats() -> list[str]:
+    """Second owner account(s) (owner 11 Nov 2026): TELEGRAM_EXTRA_CHAT_IDS (comma list) or ~/.config/tg_router/extra_chats."""
+    v = os.environ.get("TELEGRAM_EXTRA_CHAT_IDS", "")
+    if not v:
+        p = Path.home() / ".config" / "tg_router" / "extra_chats"
+        v = p.read_text() if p.exists() else ""
+    return [c for c in re.split(r"[,\s]+", v) if c.strip("-").isdigit() and c != owner_chat()]
+
+
 def send(rid: str, data: dict, caption: str = "", *, key: str = "", preview: bool = False, state_dir=None,
          mode: str = "") -> dict:
+    """Primary owner chat first (its error propagates), then each extra chat with its own panel/merge slot (errors only printed)."""
+    r = _send_one(rid, data, caption, key=key, preview=preview, state_dir=state_dir, mode=mode)
+    if not preview:
+        for c in extra_chats():
+            try:
+                _send_one(rid, data, caption, key=key, state_dir=state_dir, mode=mode, _chat=c)
+            except Exception as e:
+                print(f"[sink] extra chat {c} failed: {type(e).__name__}", flush=True)
+    return r
+
+
+def _send_one(rid: str, data: dict, caption: str = "", *, key: str = "", preview: bool = False, state_dir=None,
+              mode: str = "", _chat: str = "") -> dict:
     """Deliver one alert of family rid. Returns {"action": sent|merged|edited|unchanged|queued, "msg_id": ...}.
     mode: "" = the family default; "panel" = the pinned live panel (edit in place, nothing sent when unchanged)."""
     reg = registry()
@@ -285,7 +317,7 @@ def send(rid: str, data: dict, caption: str = "", *, key: str = "", preview: boo
         return queue(rid, key or rid, caption or data.get("h", rid), state_dir=state_dir, preview=preview)
     if f["destination"] != "widget":
         return {"action": "none"}
-    chat = owner_chat()
+    chat = _chat or owner_chat()
     sound = bool(f["sound"]) and mode != "panel"
     text_mode = render_of(reg, f) == "text"
     M_SEND, M_EDIT = ("sendMessage", "editMessageText") if text_mode else ("sendWidget", "editMessageWidgetData")
@@ -303,6 +335,8 @@ def send(rid: str, data: dict, caption: str = "", *, key: str = "", preview: boo
 
     p = build(data)
     slot = f"{rid}:panel" if mode == "panel" else rid
+    if _chat:
+        slot += f"@{_chat}"
     now = time.time()
     with _State(state_dir) as st:
         prev = st.d.get(slot)
@@ -344,7 +378,7 @@ def send(rid: str, data: dict, caption: str = "", *, key: str = "", preview: boo
             st.d[slot] = {"id": mid, "ts": now, "cd": cdk(p, data), "dj": json.dumps(data)}
             st.save()
         _log(state_dir, rid, "preview" if preview else "sent", mid, key)
-    if not preview and mode != "panel":
+    if not preview and mode != "panel" and not _chat:
         _mirror(reg, caption or data.get("h", ""))
     print(f"sent message_id={mid}", flush=True)
     return {"action": "sent", "msg_id": mid}
