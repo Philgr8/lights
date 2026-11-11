@@ -6,10 +6,9 @@ Each source yields {date: 48 half-hour slots, '1' = no power}; the consensus is 
 
   lights.py tick [--dry]   one pass (systemd timer, every 30 min): changes, reminders, morning summary
   lights.py show           print each source and the consensus, send nothing
-  lights.py chatid         read getUpdates, store the private chat id of whoever sent /start
   lights.py test           send one test line
 
-Env: TELEGRAM_BOT_TOKEN + TELEGRAM_GROUP_CHAT_ID ("Claude Alerts", ALERT_* names win; never printed), LIGHTS_QUEUE (default 1.1), LIGHTS_STATE (state dir).
+Env: TELEGRAM_BOT_TOKEN + TELEGRAM_OWNER_CHAT_ID (sink, private chat; never printed), LIGHTS_QUEUE (default 1.1), LIGHTS_STATE (state dir).
 """
 import datetime as dt
 import hashlib
@@ -284,41 +283,72 @@ def save(st: dict) -> None:
     os.replace(tmp, STATE)  # atomic: power can drop mid-write
 
 
-def _alert_token() -> str:
-    return os.getenv("TELEGRAM_ALERT_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+def _sink():
+    """The one MP-1337 sender: tools/tg_widgets/sink.py, or a copy vendored beside this script (cloud runner)."""
+    here = Path(__file__).resolve().parent
+    for d in (here, here.parent / "tools" / "tg_widgets"):
+        if (d / "sink.py").exists():
+            sys.path.insert(0, str(d))
+            import sink  # noqa: PLC0415
+            return sink
+    sys.exit("[FATAL] sink.py not found beside lights.py or in tools/tg_widgets")
 
 
-def _alert_chat() -> str:
-    return os.getenv("TELEGRAM_ALERT_CHAT_ID") or os.getenv("TELEGRAM_GROUP_CHAT_ID", "")
+def _bars(sched: dict, d: dt.date) -> list:
+    return [[a / 2, b / 2, "r"] for a, b in intervals(sched[d.isoformat()])] if d.isoformat() in sched else []
 
 
-def tg(method: str, **params) -> dict:
-    tok = _alert_token()
-    if not tok:
-        sys.exit("[FATAL] TELEGRAM_BOT_TOKEN missing")
-    data = urllib.parse.urlencode(params).encode()
-    with urllib.request.urlopen(f"https://api.telegram.org/bot{tok}/{method}", data=data, timeout=30) as r:
-        return json.load(r)
+def panel_data(sched: dict, t: dt.datetime, head: str = "") -> dict:
+    """Pinned live panel (registry 'lights', widget kit keys): state chip, next outage, today/tomorrow timeline."""
+    today, tm = t.date(), t.date() + dt.timedelta(days=1)
+    nxt = next_outage_line(sched, t)
+    off_now = any(a <= t < b for a, b in abs_outages(sched, today))
+    soon = [(a - t).total_seconds() / 60 for a, b in abs_outages(sched, today) if t < a]
+    if off_now:
+        chip = ["r", "OFF"]
+    elif soon and min(soon) <= WARN_OFF_MIN:
+        chip = ["a", f"OFF IN {round(min(soon))}m"]
+    else:
+        chip = ["g", "ON"]
+    rows = [[f"Today {today:%d.%m}", "", _bars(sched, today), round(t.hour + t.minute / 60, 2)]]
+    if tm.isoformat() in sched:
+        rows.append([f"Tomorrow {tm:%d.%m}", "", _bars(sched, tm)])
+    return {"f": f"Lights, queue {QUEUE}", "c": chip, "a": f"{t:%H:%M}", "bg": 1, "h": head or nxt[:80], "t": rows,
+            "x": [["Refresh chart", "lt:rf", "s"]]}
 
 
-def send(st: dict, text: str, dry: bool) -> bool:
+def change_data(chg: dict, t: dt.datetime) -> dict:
+    """Schedule-change message: was / now / added for each changed day, timeline of the new schedule."""
+    k, rows = [], []
+    for d, (was, new) in sorted(chg.items()):
+        lab = d[8:10] + "." + d[5:7]
+        if was is not None and was != new:
+            k += [[f"Was {lab}", column(was).replace("\n", ", ")], [f"Now {lab}", column(new).replace("\n", ", ")]]
+            add = "".join("1" if x == "1" and w != "1" else "0" for x, w in zip(new, was))
+            if "1" in add:
+                k.append([f"Added {lab}", column(add).replace("\n", ", ")])
+        elif was is None:
+            k.append([f"New {lab}", column(new).replace("\n", ", ")])
+        rows.append([f"{lab}", f"changed {t:%H:%M}", [[a / 2, b / 2, "r"] for a, b in intervals(new)]])
+    return {"f": f"Lights, queue {QUEUE}", "c": ["r", "CHANGED"], "a": f"{t:%H:%M}", "h": "Schedule changed",
+            "k": k[:6], "t": rows[:2], "x": [["Refresh chart", "lt:rf", "s"]]}
+
+
+def send(st: dict, text: str, dry: bool, data: dict | None = None, sound: bool = False) -> bool:
+    """Everything goes through the sink to the owner's private chat. sound=True: a NEW sounding message
+    (schedule change). Otherwise a silent edit of the pinned panel; unchanged panel = nothing sent."""
     if dry:
-        print("WOULD SEND:", text)
+        log(f"dry: {text[:80]!r}")
         return True
-    # Owner 7 Nov 2026: same "Claude Alerts" group as notify.py / usage_alerts (metime); same chat resolution as
-    # notify.creds(). Sent directly, not via `notify.py route telegram`: its P0 cap (5/day, one key per 24 h)
-    # would drop the 4-8 outage reminders of a normal day. Dedupe is this script's own `sent` keys.
-    chat = os.getenv("LIGHTS_CHAT_ID") or _alert_chat()
-    if not chat:
-        log("no chat id; run `lights.py chatid` after /start")
-        return False
+    if data is None:
+        data = {"f": f"Lights, queue {QUEUE}", "c": ["a", "INFO"], "a": f"{now():%H:%M}", "h": text[:80]}
     try:
-        ok = tg("sendMessage", chat_id=chat, text=text, disable_web_page_preview="true").get("ok", False)
+        r = _sink().send("lights", data, text.split("\n")[0][:200], state_dir=STATE_DIR, mode="" if sound else "panel")
     except Exception as e:
-        log(f"send failed: {type(e).__name__}")
+        log(f"send failed: {type(e).__name__}: {str(e)[:120]}")
         return False
-    log(f"sent: {text[:80]!r}")
-    return ok
+    log(f"{r.get('action')}: {text[:80]!r}")
+    return True
 
 
 def once(st: dict, key: str, text: str, dry: bool) -> None:
@@ -353,8 +383,9 @@ def next_outage_line(sched: dict, t: dt.datetime) -> str:
 # ---------- the tick ----------
 
 def tick(dry: bool) -> int:
-    if not dry and not (_alert_token() and (os.getenv("LIGHTS_CHAT_ID") or _alert_chat())):
-        sys.exit("[FATAL] Telegram token or alert chat id missing (EnvironmentFile not loaded)")
+    if not dry:
+        if _sink().whoami():  # prints bot name and set/missing only
+            sys.exit("[FATAL] bot token or owner chat env missing/wrong")
     st = load()
     st.setdefault("sched", {}); st.setdefault("sent", {}); st.setdefault("fail", 0)
     t = now()
@@ -368,7 +399,9 @@ def tick(dry: bool) -> int:
     if not any(res.values()):
         st["fail"] += 1
         if st["fail"] == FAIL_ALERT:
-            send(st, f"❓ Ни один сайт с графиком не отвечает {st['fail'] * TICK_MIN} мин; проверю дальше.", dry)
+            send(st, f"❓ Ни один сайт с графиком не отвечает {st['fail'] * TICK_MIN} мин; проверю дальше.", dry,
+                 {"f": f"Lights, queue {QUEUE}", "c": ["a", "NO DATA"], "a": f"{t:%H:%M}",
+                  "h": f"No schedule source answers for {st['fail'] * TICK_MIN} min"})
         st["last_tick"] = t.isoformat(timespec="seconds")
         if not dry:
             save(st)
@@ -426,7 +459,17 @@ def tick(dry: bool) -> int:
         msg = f"🌙 Вечер {today:%d.%m} ({q}). " + next_outage_line(sched, t) + "\n\n" \
             + block(tomorrow, "Завтра", tm, "график ещё не опубликован")
         keys = [f"evening:{today}"]
-    if msg is None or send(st, msg, dry):
+    chg = {d: (st["sched"].get(d), upd[d]) for d in upd}
+    sounding = bool(changed) and not first_run and any(was for was, _ in changed.values())
+    if msg is None:
+        ok = True
+    elif sounding:   # a schedule change: a NEW sounding message, then the pinned panel follows silently
+        ok = send(st, msg, dry, change_data(chg, t), sound=True)
+        if ok:
+            send(st, msg, dry, panel_data(sched, t, "Schedule changed " + f"{t:%H:%M}"))
+    else:
+        ok = send(st, msg, dry, panel_data(sched, t, msg.split("\n")[0][:80]))
+    if ok:
         for k in keys:
             st["sent"][k] = t.isoformat(timespec="seconds")
         st["sched"].update(upd)
@@ -440,7 +483,7 @@ def tick(dry: bool) -> int:
         if a <= t and 0 < to_b <= WARN_ON_MIN and f"on:{b:%F %H:%M}" not in st["sent"]:
             rem.append((f"on:{b:%F %H:%M}", f"💡 Свет должны вернуть в {b:%H:%M} (через {round(to_b)} мин). "
                         + next_outage_line(sched, b + dt.timedelta(minutes=1))))
-    if rem and send(st, "\n".join(x for _, x in rem), dry):
+    if rem and send(st, "\n".join(x for _, x in rem), dry, panel_data(sched, t, rem[0][1][:80])):
         for k, _ in rem:
             st["sent"][k] = t.isoformat(timespec="seconds")
 
@@ -468,19 +511,6 @@ def show() -> int:
     return 0 if cons else 1
 
 
-def chatid() -> int:
-    st = load()
-    ups = tg("getUpdates").get("result", [])
-    chats = [u["message"]["chat"] for u in ups if u.get("message", {}).get("chat", {}).get("type") == "private"]
-    if not chats:
-        print("no private message yet: send /start to the bot, then rerun")
-        return 1
-    st["chat_id"] = chats[-1]["id"]
-    save(st)
-    print("chat id stored")
-    return 0
-
-
 def main() -> int:
     cmd = sys.argv[1] if len(sys.argv) > 1 else "tick"
     if cmd == "tick":
@@ -488,20 +518,10 @@ def main() -> int:
     if cmd == "show":
         return show()
     if cmd == "chatid":
-        return chatid()
-    if cmd == "diag":  # why chatid sees nothing: webhook set, or updates consumed elsewhere; prints no ids
-        w = tg("getWebhookInfo").get("result", {})
-        print("webhook set:", bool(w.get("url")), "pending:", w.get("pending_update_count"))
-        if _alert_chat():
-            c = tg("getChat", chat_id=_alert_chat()).get("result", {})
-            print("alert chat:", c.get("type"), c.get("title"))
-        r = tg("getUpdates")
-        print("ok:", r.get("ok"), "updates:", [(k, (v.get("chat") or {}).get("type")) for x in r.get("result", [])
-                                              for k, v in x.items() if k != "update_id" and isinstance(v, dict)])
-        return 0
+        sys.exit("[FATAL] chatid retired (MP-1337): the sink sends to TELEGRAM_OWNER_CHAT_ID")
     if cmd == "test":
         st = load()
-        return 0 if send(st, f"🧪 Тест: бот света на связи ({now():%H:%M} Kyiv).", False) else 1
+        return 0 if send(st, f"Test: lights bot is up ({now():%H:%M} Kyiv).", False) else 1
     print(__doc__)
     return 2
 
