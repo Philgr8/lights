@@ -511,12 +511,26 @@ def show() -> int:
     return 0 if cons else 1
 
 
+def refresh() -> int:
+    """Button press: send the current consensus schedule to the owner chat, no dedupe."""
+    res, _ = fetch_all()
+    cons, _ = consensus(res)
+    if not cons:
+        send(load(), "Could not fetch the schedule, try later.", False)
+        return 1
+    today = now().date().isoformat()
+    lines = [f"{d}\n{column(s)}" for d, s in sorted(cons.items()) if d >= today]
+    return 0 if send(load(), "\n\n".join(lines) or "No data for today.", False) else 1
+
+
 def main() -> int:
     cmd = sys.argv[1] if len(sys.argv) > 1 else "tick"
     if cmd == "tick":
         return tick("--dry" in sys.argv)
     if cmd == "show":
         return show()
+    if cmd == "refresh":
+        return refresh()
     if cmd == "chatid":
         sys.exit("[FATAL] chatid retired (MP-1337): the sink sends to TELEGRAM_OWNER_CHAT_ID")
     if cmd == "test":

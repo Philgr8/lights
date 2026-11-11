@@ -9,7 +9,7 @@ on:
       cmd:
         type: choice
         default: tick
-        options: [tick, show, test]
+        options: [tick, show, test, refresh]
 concurrency:
   group: lights
   cancel-in-progress: false
