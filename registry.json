@@ -6,7 +6,7 @@
  "token_env": "TELEGRAM_BOT_TOKEN",
  "render": "text",
  "alerts_group": {
-  "mode": "caption-only",
+  "mode": "off",
   "since": "2026-11-11",
   "retire_after": "2026-11-18",
   "note": "Alerts group receives a silent caption line per sink send until retire_after; then the sink stops mirroring. Nothing is deleted."
