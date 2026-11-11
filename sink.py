@@ -369,11 +369,6 @@ def _send_one(rid: str, data: dict, caption: str = "", *, key: str = "", preview
         mid = (r.get("result") or {}).get("message_id")
         if not r.get("ok") or mid is None:
             raise SinkError(M_SEND + " returned not ok")
-        if mode == "panel":
-            try:
-                bot_call("pinChatMessage", {"chat_id": chat, "message_id": mid, "disable_notification": True}, retries=0)
-            except SinkError:
-                pass
         if not preview:
             st.d[slot] = {"id": mid, "ts": now, "cd": cdk(p, data), "dj": json.dumps(data)}
             st.save()
