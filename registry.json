@@ -1,0 +1,185 @@
+{
+ "version": 1,
+ "owner": "MP-1337",
+ "bot": "jobwatch777_bot",
+ "chat_env": "TELEGRAM_OWNER_CHAT_ID",
+ "token_env": "TELEGRAM_BOT_TOKEN",
+ "render": "text",
+ "alerts_group": {
+  "mode": "caption-only",
+  "since": "2026-11-11",
+  "retire_after": "2026-11-18",
+  "note": "Alerts group receives a silent caption line per sink send until retire_after; then the sink stops mirroring. Nothing is deleted."
+ },
+ "cutover": {
+  "p0_legacy_via_widget": false,
+  "note": "true = `notify.py route telegram` P0 callers are delivered as the p0 widget (sound, no daily cap) instead of a group sendMessage. The legacy P0_CAP_DAY cap stays only on the legacy path."
+ },
+ "dropped": [
+  {
+   "family": "todoist-24h-deadline",
+   "why": "owner ruling 11 Nov 2026"
+  },
+  {
+   "family": "digest-0900",
+   "why": "owner ruling 11 Nov 2026"
+  },
+  {
+   "family": "token-usage-limits",
+   "why": "owner ruling 11 Nov 2026"
+  },
+  {
+   "family": "plan-row",
+   "why": "8765 #q only (MP-1339)"
+  },
+  {
+   "family": "stall-crash-loop",
+   "why": "8765 #q only (MP-1339)"
+  }
+ ],
+ "families": [
+  {
+   "id": "p0",
+   "n": 1,
+   "source": "notify.py route telegram P0 callers, code-review, evidence_skel, base/opps",
+   "priority": "P0",
+   "destination": "widget",
+   "sound": true,
+   "merge_window_min": 0,
+   "mode": "new",
+   "widget": {
+    "label": "P0 alarm",
+    "height": 260
+   }
+  },
+  {
+   "id": "lights",
+   "n": 10,
+   "source": "lights/lights.py (one sender)",
+   "priority": "SOUND+PANEL",
+   "destination": "widget",
+   "sound": true,
+   "merge_window_min": 10,
+   "mode": "new+panel",
+   "widget": {
+    "label": "Lights, queue 1.1",
+    "height": 330
+   },
+   "note": "schedule change = new sounding message (merged within 10 min); current state = ONE pinned panel edited in place (silent); unchanged tick sends nothing"
+  },
+  {
+   "id": "jobs",
+   "n": 11,
+   "source": "jobmonitor/jobmon_lite.py (one summary per run)",
+   "priority": "SOUND",
+   "destination": "widget",
+   "sound": true,
+   "merge_window_min": 0,
+   "mode": "new",
+   "widget": {
+    "label": "Jobs",
+    "height": 300
+   },
+   "note": "one run = one message listing the new roles; no per-row Apply/Skip"
+  },
+  {
+   "id": "wallet",
+   "n": 12,
+   "source": "Sleuth/sleuth/holdings.py",
+   "priority": "SILENT",
+   "destination": "widget",
+   "sound": false,
+   "merge_window_min": 0,
+   "mode": "new",
+   "widget": {
+    "label": "Wallet",
+    "height": 233
+   },
+   "note": "widget only above the holdings.py move threshold; below it nothing is sent"
+  },
+  {
+   "id": "smm-approval",
+   "n": 13,
+   "source": "smm/scripts/approvals.py (branch R owns the sender)",
+   "priority": "SILENT",
+   "destination": "widget",
+   "sound": false,
+   "merge_window_min": 0,
+   "mode": "new",
+   "widget": {
+    "label": "SMM draft",
+    "height": 259
+   }
+  },
+  {
+   "id": "smm-alert",
+   "n": 14,
+   "source": "smm/scripts/alert.py, smm/scripts/notify.py",
+   "priority": "SILENT",
+   "destination": "8765#q",
+   "sound": false,
+   "merge_window_min": 0,
+   "mode": "queue",
+   "oq_why": "decision",
+   "note": "owner-queue.py add (the writer behind the 8765 #q page)"
+  },
+  {
+   "id": "tcb",
+   "n": 15,
+   "source": "tcb/tcb_monitor.py (TOPOVHELPER keyword match)",
+   "priority": "SOUND",
+   "destination": "widget",
+   "sound": true,
+   "merge_window_min": 5,
+   "mode": "new",
+   "widget": {
+    "label": "TCB",
+    "height": 330
+   },
+   "note": "matches within 5 min = one message"
+  },
+  {
+   "id": "heuristics",
+   "n": 9,
+   "source": "MP-1333 heuristics launch card (owner launches, no autorun)",
+   "priority": "SILENT",
+   "destination": "widget",
+   "sound": false,
+   "merge_window_min": 0,
+   "mode": "new",
+   "widget": {
+    "label": "Heuristics",
+    "height": 262
+   }
+  },
+  {
+   "id": "owner-queue",
+   "n": 8,
+   "source": "owner-queue.py / 8765 #q mirror panel",
+   "priority": "LIVE",
+   "destination": "widget",
+   "sound": false,
+   "merge_window_min": 0,
+   "mode": "panel",
+   "widget": {
+    "label": "Owner queue",
+    "height": 300
+   }
+  },
+  {
+   "id": "sensor-red",
+   "n": 5,
+   "source": "sensor-red@, base/sensors/missed_audit",
+   "priority": "SILENT",
+   "destination": "widget",
+   "sound": false,
+   "merge_window_min": 0,
+   "mode": "new",
+   "widget": {
+    "label": "Sensor",
+    "height": 243
+   }
+  }
+ ],
+ "render_note": "text = sendMessage HTML with key rows + inline keyboard (default while widgets do not render on owner clients); widget = sendWidget kit. Per-family 'render' overrides. tools/tg_router/go_widgets.sh flips the global to widget."
+}
