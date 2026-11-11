@@ -298,12 +298,24 @@ def _bars(sched: dict, d: dt.date) -> list:
     return [[a / 2, b / 2, "r"] for a, b in intervals(sched[d.isoformat()])] if d.isoformat() in sched else []
 
 
-def std_data(chip: list, days: list, note: str = "", x: bool = False) -> dict:
+def future_slots(slots: str, t: dt.datetime) -> str:
+    """Today only: drop intervals that already ended (owner 11 Nov 2026: no past schedule in messages)."""
+    cur = t.hour * 2 + t.minute // 30
+    out = list(slots)
+    for a, b in intervals(slots):
+        if b <= cur:
+            out[a:b] = "0" * (b - a)
+    return "".join(out)
+
+
+def std_data(chip: list, days: list, note: str = "", x: bool = False, today_iso: str = "") -> dict:
     """THE one message layout (owner 11 Nov 2026): title 'Свет, очередь N' + status, then per day the date
     (dd.mm) and one interval per line; days separated by a blank line; an optional note line on top."""
     blocks = []
     for d, slots in days:
         iv = column(slots) if slots else "график не опубликован"
+        if slots and not intervals(slots) and d == today_iso:
+            iv = "отключений больше нет"
         blocks.append(d[8:10] + "." + d[5:7] + "\n" + iv)
     body = "\n\n".join(blocks)
     out = {"f": f"Свет, очередь {QUEUE}", "c": chip, "w": (note + "\n\n" if note and body else note) + body}
@@ -324,12 +336,14 @@ def panel_data(sched: dict, t: dt.datetime, note: str = "") -> dict:
     else:
         chip = ["g", "свет есть"]
     days = [(d.isoformat(), sched[d.isoformat()]) for d in (today, tm) if d.isoformat() in sched]
-    return std_data(chip, days, note, x=True)
+    days = [(d, future_slots(sl, t) if d == today.isoformat() and sl else sl) for d, sl in days]
+    return std_data(chip, days, note, x=True, today_iso=today.isoformat())
 
 
 def change_data(chg: dict, t: dt.datetime) -> dict:
     """Schedule-change message: the new schedule of each changed day."""
-    return std_data(["r", "изменения"], [(d, new) for d, (was, new) in sorted(chg.items())])
+    ti = t.date().isoformat()
+    return std_data(["r", "изменения"], [(d, future_slots(new, t) if d == ti and new else new) for d, (was, new) in sorted(chg.items())], today_iso=ti)
 
 
 def send(st: dict, text: str, dry: bool, data: dict | None = None, sound: bool = False) -> bool:
