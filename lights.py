@@ -474,11 +474,13 @@ def tick(dry: bool) -> int:
     for a, b in abs_outages(sched, today):
         to_a, to_b = (a - t).total_seconds() / 60, (b - t).total_seconds() / 60
         if 0 < to_a <= WARN_OFF_MIN and f"off:{a:%F %H:%M}" not in st["sent"]:
-            rem.append((f"off:{a:%F %H:%M}", f"🔌 Через {round(to_a)} мин отключение: {span(a, b)}, вернут в {b:%H:%M}."))
+            rem.append((f"off:{a:%F %H:%M}", f"отключение через {round(to_a)} мин"))
         if a <= t and 0 < to_b <= WARN_ON_MIN and f"on:{b:%F %H:%M}" not in st["sent"]:
-            rem.append((f"on:{b:%F %H:%M}", f"💡 Свет должны вернуть в {b:%H:%M} (через {round(to_b)} мин). "
-                        + next_outage_line(sched, b + dt.timedelta(minutes=1))))
-    if rem and send(st, "\n".join(x for _, x in rem), dry, panel_data(sched, t, "\n".join(x for _, x in rem))):
+            rem.append((f"on:{b:%F %H:%M}", f"свет вернут через {round(to_b)} мин"))
+    if rem:
+        rdata = panel_data(sched, t)
+        rdata["c"] = ["a", " / ".join(x for _, x in rem)]   # status in the title; the day lines below are the only body (owner 11 Nov)
+    if rem and send(st, rdata["c"][1], dry, rdata, sound=True):
         for k, _ in rem:
             st["sent"][k] = t.isoformat(timespec="seconds")
 

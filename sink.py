@@ -222,7 +222,7 @@ def render_text(f: dict, d: dict, caption: str, preview: bool) -> tuple[str, dic
     out = []
     if preview:
         out.append("<b>TEST (text preview)</b>")
-    out.append(f"{CHIP.get(chip[0], '')} <b>{_esc(d.get('f') or f['widget']['label'])}</b> {_esc(chip[1])}  <i>{_esc(d.get('a', ''))}</i>")
+    out.append(f"{CHIP.get(chip[0], '')} <b>{_esc(d.get('f') or f['widget']['label'])}</b> {_esc(chip[1])}".rstrip())   # no clock time: Telegram shows it (owner 11 Nov)
     if d.get("h"):
         out.append(f"<b>{_esc(d['h'])}</b>")
     if d.get("w"):
