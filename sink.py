@@ -346,6 +346,7 @@ def send(rid: str, data: dict, caption: str = "", *, key: str = "", preview: boo
         _log(state_dir, rid, "preview" if preview else "sent", mid, key)
     if not preview and mode != "panel":
         _mirror(reg, caption or data.get("h", ""))
+    print(f"sent message_id={mid}", flush=True)
     return {"action": "sent", "msg_id": mid}
 
 
@@ -372,7 +373,10 @@ def send_text(text: str, *, silent: bool = True, parse_mode: str = "", reply_to=
         p["parse_mode"] = parse_mode
     if reply_to:
         p["reply_to_message_id"] = reply_to
-    return bot_call("sendMessage", p)
+    r = bot_call("sendMessage", p)
+    if r.get("ok"):
+        print(f"sent message_id={(r.get('result') or {}).get('message_id')}", flush=True)
+    return r
 
 
 def send_document(path: str, caption: str = "", parse_mode: str = "", reply_to=None) -> dict:
