@@ -65,7 +65,28 @@ def owner_chat() -> str:
     return c
 
 
+DUP_METHODS = {"sendMessage", "sendDocument", "sendPhoto", "sendVideo", "sendAnimation", "sendAudio", "sendVoice",
+               "sendMediaGroup", "sendWidget", "sendSticker", "sendLocation"}
+_NODUP = False  # True inside send(), which fans out itself (each extra chat keeps its own panel state)
+
+
 def bot_call(method: str, payload: dict, *, files=None, timeout=30, retries=2) -> dict:
+    """Owner 12 Nov 2026: every send to the primary owner chat is duplicated to each extra chat (extra_chats()).
+    Only the primary call's result/error is returned; extra-chat errors are printed."""
+    r = _bot_call_raw(method, payload, files=files, timeout=timeout, retries=retries)
+    if _NODUP or method not in DUP_METHODS or str(payload.get("chat_id")) != os.environ.get(
+            "TELEGRAM_OWNER_CHAT_ID", os.environ.get("TELEGRAM_CHAT_ID", "")):
+        return r
+    for c in extra_chats():
+        try:
+            _bot_call_raw(method, {**{k: v for k, v in payload.items() if k != "reply_to_message_id"}, "chat_id": c},
+                          files=files, timeout=timeout, retries=0)
+        except Exception as e:
+            print(f"[sink] extra chat ..{c[-4:]} {method} failed: {type(e).__name__}", flush=True)
+    return r
+
+
+def _bot_call_raw(method: str, payload: dict, *, files=None, timeout=30, retries=2) -> dict:
     """POST one Bot API method as JSON (or multipart when files is given). Raises SinkError without the URL (it holds the token)."""
     tok = token()
     url = f"{TG}/bot{tok}/{method}"
@@ -297,7 +318,12 @@ def extra_chats() -> list[str]:
 def send(rid: str, data: dict, caption: str = "", *, key: str = "", preview: bool = False, state_dir=None,
          mode: str = "") -> dict:
     """Primary owner chat first (its error propagates), then each extra chat with its own panel/merge slot (errors only printed)."""
-    r = _send_one(rid, data, caption, key=key, preview=preview, state_dir=state_dir, mode=mode)
+    global _NODUP
+    _NODUP = True
+    try:
+        r = _send_one(rid, data, caption, key=key, preview=preview, state_dir=state_dir, mode=mode)
+    finally:
+        _NODUP = False
     if not preview:
         for c in extra_chats():
             try:
