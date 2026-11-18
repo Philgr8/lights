@@ -48,7 +48,9 @@ def family(rid: str, reg=None) -> dict:
     for f in (reg or registry())["families"]:
         if f["id"] == rid:
             return f
-    raise SinkError(f"unknown family {rid!r}")
+    # MP-1565 (owner 18 Nov 2026): an unknown/new family is never private; it goes to the Alerts group as a plain P0-shaped card
+    return {"id": rid, "n": 0, "source": "unregistered", "priority": "UNKNOWN", "destination": "widget", "sound": True,
+            "merge_window_min": 0, "mode": "new", "widget": {"label": rid, "height": 260}, "chat_env": "TELEGRAM_GROUP_CHAT_ID"}
 
 
 def token() -> str:
@@ -62,6 +64,24 @@ def owner_chat() -> str:
     c = os.environ.get("TELEGRAM_OWNER_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID", "")
     if not c:
         raise SinkError("TELEGRAM_OWNER_CHAT_ID not set")
+    return c
+
+
+def family_of(rid: str) -> dict:
+    """Family dict for rid; empty/unknown -> the unregistered fallback (Alerts group), see family()."""
+    return family(rid or "unregistered")
+
+
+def family_chat(f: dict) -> str:
+    """Per-family chat (owner 18 Nov 2026, MP-1562): registry field `chat_env` names the env variable holding the chat id
+    (p0 and eth-forecast -> the Alerts group). No field = the private owner chat (returns "").
+    A named but empty variable is a loud error, never a silent fallback to the private chat."""
+    name = f.get("chat_env", "")
+    if not name:
+        return ""
+    c = os.environ.get(name, "")
+    if not c:
+        raise SinkError(f"{name} not set (family {f.get('id')} routes to it)")
     return c
 
 
@@ -324,7 +344,7 @@ def send(rid: str, data: dict, caption: str = "", *, key: str = "", preview: boo
         r = _send_one(rid, data, caption, key=key, preview=preview, state_dir=state_dir, mode=mode)
     finally:
         _NODUP = False
-    if not preview:
+    if not preview and not family(rid).get("chat_env"):  # a group family is MOVED, not copied to extra chats
         for c in extra_chats():
             try:
                 _send_one(rid, data, caption, key=key, state_dir=state_dir, mode=mode, _chat=c)
@@ -343,7 +363,7 @@ def _send_one(rid: str, data: dict, caption: str = "", *, key: str = "", preview
         return queue(rid, key or rid, caption or data.get("h", rid), state_dir=state_dir, preview=preview)
     if f["destination"] != "widget":
         return {"action": "none"}
-    chat = _chat or owner_chat()
+    chat = _chat or family_chat(f) or owner_chat()
     sound = bool(f["sound"]) and mode != "panel"
     text_mode = render_of(reg, f) == "text"
     M_SEND, M_EDIT = ("sendMessage", "editMessageText") if text_mode else ("sendWidget", "editMessageWidgetData")
@@ -399,7 +419,7 @@ def _send_one(rid: str, data: dict, caption: str = "", *, key: str = "", preview
             st.d[slot] = {"id": mid, "ts": now, "cd": cdk(p, data), "dj": json.dumps(data)}
             st.save()
         _log(state_dir, rid, "preview" if preview else "sent", mid, key)
-    if not preview and mode != "panel" and not _chat:
+    if not preview and mode != "panel" and not _chat and not f.get("chat_env"):
         _mirror(reg, caption or data.get("h", ""))
     print(f"sent message_id={mid}", flush=True)
     return {"action": "sent", "msg_id": mid}
@@ -421,9 +441,9 @@ def queue(rid: str, key: str, text: str, *, state_dir=None, preview=False) -> di
     return {"action": "queued", "key": slug}
 
 
-def send_text(text: str, *, silent: bool = True, parse_mode: str = "", reply_to=None) -> dict:
-    """Plain text to the owner's private chat (jobmon status lines, errors). Not an alert family: silent by default."""
-    p = {"chat_id": owner_chat(), "text": text[:4000], "disable_notification": silent, "disable_web_page_preview": True}
+def send_text(text: str, *, silent: bool = True, parse_mode: str = "", reply_to=None, family: str = "") -> dict:
+    """Plain text. MP-1565: routed by the family chat field; no/unknown family = the Alerts group, only lights + jobs are private."""
+    p = {"chat_id": family_chat(family_of(family)) or owner_chat(), "text": text[:4000], "disable_notification": silent, "disable_web_page_preview": True}
     if parse_mode:
         p["parse_mode"] = parse_mode
     if reply_to:
@@ -434,8 +454,8 @@ def send_text(text: str, *, silent: bool = True, parse_mode: str = "", reply_to=
     return r
 
 
-def send_document(path: str, caption: str = "", parse_mode: str = "", reply_to=None) -> dict:
-    p = {"chat_id": owner_chat(), "caption": caption[:CAPTION_MAX], "disable_notification": True}
+def send_document(path: str, caption: str = "", parse_mode: str = "", reply_to=None, family: str = "") -> dict:
+    p = {"chat_id": family_chat(family_of(family)) or owner_chat(), "caption": caption[:CAPTION_MAX], "disable_notification": True}
     if parse_mode:
         p["parse_mode"] = parse_mode
     if reply_to:
