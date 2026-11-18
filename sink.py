@@ -333,11 +333,18 @@ def render_text(f: dict, d: dict, caption: str, preview: bool) -> tuple[str, dic
     if d.get("arrow"):
         codes.insert(0, ("\u25B2" if d["arrow"] == "up" else "\u25BC") + (" " + _one(d.get("arrow_txt", ""), 30) if d.get("arrow_txt") else ""))
     codes += sched
-    if pre_rows:
-        out.append(_pre(pre_rows))
-    out += [f"<code>{_esc(c)}</code>" for c in codes[:3]]
-    if codes[3:]:
-        out.append("<blockquote expandable>" + "\n".join(_esc(c) for c in codes[3:]) + "</blockquote>")
+    # MP-1580 (owner 18 Nov 2026): at most 4 visible lines (head + key numbers); everything else under the expandable cut
+    budget = 3 - ((1 + bool(d.get("bar_lbl"))) if d.get("bar") is not None else 0)
+    budget = max(budget, 1)
+    shown_pre = pre_rows[:budget]
+    hidden = [r.replace(" = ", " ", 1) for r in pre_rows[budget:]]
+    if shown_pre:
+        out.append(_pre(shown_pre))
+    nc = max(budget - len(shown_pre), 0)
+    out += [f"<code>{_esc(c)}</code>" for c in codes[:nc]]
+    hidden += codes[nc:]
+    if hidden:
+        out.append("<blockquote expandable>" + "\n".join(_esc(c) for c in hidden) + "</blockquote>")
     if d.get("bar") is not None:
         out.append(_pre([_one(d.get("bar_lbl"), 22)] * bool(d.get("bar_lbl")) + [bar(d["bar"])], "css"))
     kb, row = [], []
