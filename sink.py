@@ -80,6 +80,9 @@ def family_chat(f: dict) -> str:
     if not name:
         return ""
     c = os.environ.get(name, "")
+    if not c and name == "TELEGRAM_GROUP_CHAT_ID":  # services without the key store: chat ids are not secrets (same place as extra_chats)
+        p = Path.home() / ".config" / "tg_router" / "group_chat_id"
+        c = p.read_text().strip() if p.exists() else ""
     if not c:
         raise SinkError(f"{name} not set (family {f.get('id')} routes to it)")
     return c
