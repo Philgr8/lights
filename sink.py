@@ -259,32 +259,78 @@ def callback_data(req: str) -> str:
     return cb.encode()[:64].decode("utf-8", "ignore")
 
 
+MARK = {"g": "\U0001F7E9", "r": "\U0001F7E5", "a": "\U0001F7E7", "b": "\u2B1B"}   # status squares only (P0 red, warn orange, ok green, info black)
+#: family id -> (monochrome glyph, CAPS English tag); MP-1563 cyberpunk text cards
+TAGS = {"p0": ("\u231D", "P0 // ALARM"), "lights": ("\u2301", "LIGHTS // GRID"), "jobs": ("\u25B8", "JOBS // FEED"),
+        "wallet": ("\u26D3", "WALLET // MOVE"), "smm-approval": ("\u25E2", "SMM // APPROVAL"), "smm-alert": ("\u25E4", "SMM // ALERT"),
+        "tcb": ("\u2593", "TCB // WATCH"), "heuristics": ("\u27E6\u27E7", "HEUR // LAUNCH"), "owner-queue": ("\u2592", "OQ // QUEUE"),
+        "sensor-red": ("\u2591", "SENSOR // RED"), "eth-forecast": ("\u25B2", "ETH // FORECAST"),
+        "opps": ("\u25C8", "OPPS // FEED")}
+BTN = {"p": "\u2713", "s": "\u23F8", "d": "\u2715", "l": "\u2197"}
+
+
+def bar(pct, n: int = 10) -> str:
+    """Number as a bar: 62 -> ▰▰▰▰▰▰▱▱▱▱ 62%."""
+    p = max(0, min(100, int(round(float(pct)))))
+    k = round(p * n / 100)
+    return "\u25B0" * k + "\u25B1" * (n - k) + f" {p}%"
+
+
+def _one(x, n: int = 44) -> str:
+    t = " ".join(str(x).split())
+    return t if len(t) <= n else t[: n - 1] + "\u2026"
+
+
 def render_text(f: dict, d: dict, caption: str, preview: bool) -> tuple[str, dict | None]:
-    """The widget fields as an HTML message, same fields and order as the mockups: chip + bold title + status word + time, headline h,
-    sub-line w, body u, key rows k, list rows l, timeline rows t; buttons as one inline keyboard."""
+    """MP-1563: compact cyberpunk card, <= 6 lines. L1 status mark + glyph + CAPS tag; <= 4 body lines `glyph <code>value</code>`;
+    optional <pre> bar; footer `time Kyiv . id`. Data fields as before: c chip, h head, w sub, u body, k key rows, l list rows, t timeline, x buttons;
+    new optional: tag, g (glyph), id, bar [pct] (bar line), arrow ('up'|'down')."""
     chip = d.get("c") or ["b", ""]
-    out = []
+    fid = str(f.get("id") or "")
+    g, tag = TAGS.get(fid, ("\u25B8", str(f.get("id") or "ALERT").upper()))
+    g, tag = d.get("g", g), d.get("tag", tag)
     if preview:
-        out.append("<b>TEST (text preview)</b>")
-    out.append(f"{CHIP.get(chip[0], '')} <b>{_esc(d.get('f') or f['widget']['label'])}</b> {_esc(chip[1])}".rstrip())   # no clock time: Telegram shows it (owner 11 Nov)
-    if d.get("h"):
-        out.append(f"<b>{_esc(d['h'])}</b>")
-    if d.get("w"):
-        out.append(_esc(d["w"]))
-    if d.get("u"):
-        out.append(f"<blockquote>{_esc(d['u'])}</blockquote>")
-    for k in d.get("k") or []:
-        out.append(f"{_esc(k[0])}: <b>{_esc(k[1])}</b>")
+        tag = "TEST // " + tag
+    out = [f"{MARK.get(chip[0], MARK['b'])} {g} <code>{_esc(tag)}</code>"]
+    body, sched = [], []
+    wv = str(d.get("w") or "")
+    if fid == "lights" and re.search(r"(?m)^\d{2}\.\d{2}\s*$", wv):  # MP-1566: each outage window on its own line, grouped by date
+        notes = []
+        for blk in wv.split("\n\n"):
+            ls = [x.strip() for x in blk.split("\n") if x.strip()]
+            if ls and re.fullmatch(r"\d{2}\.\d{2}", ls[0]):
+                sched.append(f"\u23F1 <code>{_esc(ls[0])}</code>")
+                sched += [f"\u2003<code>{_esc(x)}</code>" for x in ls[1:]]
+            elif ls:
+                notes.append(" ".join(ls))
+        d = dict(d, w="; ".join(notes))
+    for key, glyph in (("h", "\u25B8"), ("w", "\u2504"), ("u", "\u2504")):
+        if d.get(key):
+            v = " ".join(x for x in str(d[key]).split("\n") if x.strip()) if key == "w" and "\n\n" in str(d[key]) else str(d[key]).split("\n")[0]
+            body.append(f"{glyph} <code>{_esc(_one(v, 56 if key == 'w' else 44))}</code>")
+    ks = [str(k[1]) for k in d.get("k") or [] if len(k) > 1 and k[1]]
+    if ks:
+        body.append("\u2307 " + " \u00B7 ".join(f"<code>{_esc(_one(v, 18))}</code>" for v in ks[:3]))
     for r in d.get("l") or []:
-        out.append(f"{CHIP.get(r[0], '-')} {_esc(r[1])}" + (f"  <i>{_esc(r[2])}</i>" if len(r) > 2 and r[2] else ""))
+        body.append(f"{MARK.get(r[0], '\u25AA')} <code>{_esc(_one(r[1], 34))}</code>" + (f" <code>{_esc(_one(r[2], 10))}</code>" if len(r) > 2 and r[2] else ""))
     for t in d.get("t") or []:
-        bars = ", ".join(f"{int(a):02d}:{int(a % 1 * 60):02d}-{int(b):02d}:{int(b % 1 * 60):02d}" for a, b, *_ in t[2]) or "без отключений"
-        out.append(f"{_esc(t[0])}: {bars}" + (f"  <i>{_esc(t[1])}</i>" if t[1] else ""))
-    # the caption is widget-mode only: in text mode it repeated the headline (owner standard 11 Nov 2026: no duplicate caption)
+        sl = " ".join(f"{int(a):02d}:{int(a % 1 * 60):02d}-{int(b):02d}:{int(b % 1 * 60):02d}" for a, b, *_ in t[2]) or "clear"
+        sched.append(f"\u23F1 <code>{_esc(_one(t[0], 12))}</code>")
+        sched += [f"\u2003<code>{int(a):02d}:{int(a % 1 * 60):02d}-{int(b):02d}:{int(b % 1 * 60):02d}</code>" for a, b, *_ in t[2]] or ["\u2003<code>clear</code>"]
+    if d.get("arrow"):
+        body.insert(1 if body else 0, ("\u25B2" if d["arrow"] == "up" else "\u25BC") + (" " + _esc(_one(d.get("arrow_txt", ""), 30)) if d.get("arrow_txt") else ""))
+    room = 4 - (1 if d.get("bar") is not None else 0)
+    if len(body) > room:
+        body = body[: room - 1] + [f"\u22EF <code>+{len(body) - room + 1}</code>"]
+    out += body + sched
+    if d.get("bar") is not None:
+        out.append(f"<pre>{(d['bar_lbl'] + chr(10)) if d.get('bar_lbl') else ''}{bar(d['bar'])}</pre>")
+    # footer line (time Kyiv + id) removed, owner 18 Nov: Telegram shows the time; the id stays in key/callback_data
     kb, row = [], []
     for b in d.get("x") or []:
-        btn = {"text": str(b[0])[:30]}
-        if len(b) > 2 and b[2] == "l":
+        st = b[2] if len(b) > 2 else "s"
+        btn = {"text": f"{BTN.get(st, chr(0x25B8))} {str(b[0])[:24]}"}
+        if st == "l":
             btn["url"] = b[1]
         else:
             btn["callback_data"] = callback_data(b[1])
