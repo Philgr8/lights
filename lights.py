@@ -490,20 +490,17 @@ def tick(dry: bool) -> int:
             st["sent"][k] = t.isoformat(timespec="seconds")
         st["sched"].update(upd)
 
-    # reminders before an outage and before power returns: their own message
-    rem = []
-    for a, b in abs_outages(sched, today):
-        to_a, to_b = (a - t).total_seconds() / 60, (b - t).total_seconds() / 60
-        if 0 < to_a <= WARN_OFF_MIN and f"off:{a:%F %H:%M}" not in st["sent"]:
-            rem.append((f"off:{a:%F %H:%M}", f"отключение через {round(to_a)} мин"))
-        if a <= t and 0 < to_b <= WARN_ON_MIN and f"on:{b:%F %H:%M}" not in st["sent"]:
-            rem.append((f"on:{b:%F %H:%M}", f"свет вернут через {round(to_b)} мин"))
-    if rem:
-        rdata = panel_data(sched, t)
-        rdata["c"] = ["a", " / ".join(x for _, x in rem)]   # status in the title; the day lines below are the only body (owner 11 Nov)
-    if rem and send(st, rdata["c"][1], dry, rdata, sound=True):
-        for k, _ in rem:
-            st["sent"][k] = t.isoformat(timespec="seconds")
+    # owner 20 Nov 2026: a new message only when the on/off state or the schedule lines change; the countdown is never part of the key
+    off_now = any(x <= t < y for x, y in abs_outages(sched, today))
+    rdata = panel_data(sched, t)
+    key = f"{int(off_now)}|{sched.get(today.isoformat(), '')}|{sched.get(tomorrow.isoformat(), '')}"
+    if sounding or (msg is not None and ok):
+        st["card_key"] = key   # the card just sent already shows this state
+    elif "card_key" not in st:
+        st["card_key"] = key   # first run of this rule: adopt the current state silently
+    elif st["card_key"] != key:
+        if send(st, rdata.get("subj", ""), dry, rdata, sound=True):
+            st["card_key"] = key
 
     # keep state small
     keep = {(today + dt.timedelta(days=k)).isoformat() for k in (-1, 0, 1)}
