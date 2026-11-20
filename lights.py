@@ -308,7 +308,7 @@ def future_slots(slots: str, t: dt.datetime) -> str:
     return "".join(out)
 
 
-def std_data(chip: list, days: list, note: str = "", x: bool = False, today_iso: str = "") -> dict:
+def std_data(chip: list, days: list, note: str = "", x: bool = False, today_iso: str = "", subj: str = "") -> dict:
     """THE one message layout (owner 11 Nov 2026): title 'Свет, очередь N' + status, then per day the date
     (dd.mm) and one interval per line; days separated by a blank line; an optional note line on top."""
     blocks = []
@@ -319,6 +319,9 @@ def std_data(chip: list, days: list, note: str = "", x: bool = False, today_iso:
         blocks.append(d[8:10] + "." + d[5:7] + "\n" + iv)
     body = "\n\n".join(blocks)
     out = {"f": f"Свет, очередь {QUEUE}", "c": chip, "w": (note + "\n\n" if note and body else note) + body}
+    if chip and len(chip) > 1 and chip[1]:  # first card line = the plain state ("Света нет до 22:30"), not "Свет и графики ..."
+        out["subj"] = subj or chip[1][:1].upper() + chip[1][1:]
+        out["c"] = [chip[0], ""]
     if x:
         out["x"] = [["Обновить", "lt:rf", "s"]]
     return out
@@ -329,15 +332,19 @@ def panel_data(sched: dict, t: dt.datetime, note: str = "") -> dict:
     today, tm = t.date(), t.date() + dt.timedelta(days=1)
     off_now = any(a <= t < b for a, b in abs_outages(sched, today))
     soon = [(a - t).total_seconds() / 60 for a, b in abs_outages(sched, today) if t < a]
+    subj = ""
     if off_now:
         chip = ["r", "света нет"]
+        ends = [b for a, b in abs_outages(sched, today) if a <= t < b]
+        if ends:
+            subj = "Света нет до " + max(ends).strftime("%H:%M")
     elif soon and min(soon) <= WARN_OFF_MIN:
         chip = ["a", f"отключение через {round(min(soon))} мин"]
     else:
         chip = ["g", "свет есть"]
     days = [(d.isoformat(), sched[d.isoformat()]) for d in (today, tm) if d.isoformat() in sched]
     days = [(d, future_slots(sl, t) if d == today.isoformat() and sl else sl) for d, sl in days]
-    return std_data(chip, days, note, x=True, today_iso=today.isoformat())
+    return std_data(chip, days, note, x=True, today_iso=today.isoformat(), subj=subj)
 
 
 def change_data(chg: dict, t: dt.datetime) -> dict:

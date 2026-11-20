@@ -43,4 +43,5 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           [ -f state.json ] || exit 0
           git add state.json
+          [ -f sink_state.json ] && git add sink_state.json || true
           git diff --cached --quiet || { git commit -qm "state $(date -u +%FT%TZ)"; git push -q origin HEAD:lights-state; }
