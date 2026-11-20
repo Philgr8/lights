@@ -4,9 +4,9 @@
 # (lights-state) and pushes back, so a tick by either runner is seen by the other: no duplicate messages,
 # except if both tick in the same minute (rare, accepted). When the nuc has no power it is simply absent.
 # Cloud commits are authored 'lights-bot', nuc commits 'lights-nuc'; freshness counts cloud commits only,
-# so the nuc keeps covering every 30 min while the cloud is silent.
+# so the nuc keeps covering every 20 min while the cloud is silent.
 set -euo pipefail
-STALE_MIN=${STALE_MIN:-50}   # cloud period 30 min + GitHub cron lag up to ~20 min
+STALE_MIN=${STALE_MIN:-40}   # cloud period 20 min (owner 20 Nov 2026) + lag up to ~20 min
 R=$(cd "$(dirname "$0")/.." && pwd)
 S="$R/.state"
 CRED=(-c credential.useHttpPath=true -c credential.helper=/home/i/.claude/secrets/git-credential-github.sh)

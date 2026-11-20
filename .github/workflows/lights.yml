@@ -3,7 +3,7 @@
 name: lights
 on:
   schedule:
-    - cron: "15,45 * * * *"  # :15/:45, midway between outage edges at :00/:30 (owner 8 Nov 2026); GitHub cron may lag 5-20 min
+    - cron: "15,35,55 * * * *"  # every 20 min (owner 20 Nov 2026; was :15/:45 from 8 Nov); backup to the lights-trigger worker cron; GitHub cron may lag 5-20 min
   workflow_dispatch:
     inputs:
       cmd:
