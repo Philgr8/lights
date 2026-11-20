@@ -229,7 +229,6 @@ def build_params(f: dict, data: dict, caption: str, chat: str, sound: bool, prev
 #: the router (branch R) decides the final grammar; the original token is kept after the prefix so nothing is lost.
 CB_PREFIX = {"heur": "heur", "smm": "smm", "lt": "lights", "oq": "stall", "nfy": "nfy",
              "sen": "nfy", "wal": "nfy", "tcb": "nfy"}
-CHIP = {"g": "\U0001F7E2", "r": "\U0001F534", "a": "\U0001F7E0", "b": "\u26AA"}   # status marks only, no blue / gold
 
 
 def render_of(reg: dict, f: dict) -> str:
@@ -259,13 +258,24 @@ def callback_data(req: str) -> str:
     return cb.encode()[:64].decode("utf-8", "ignore")
 
 
-MARK = {"g": "\U0001F7E9", "r": "\U0001F7E5", "a": "\U0001F7E7", "b": "\u2B1C"}   # status squares only (P0 red, warn orange, ok green, info black)
+MARK = {"g": "\u25CF\uFE0E", "a": "\u25D0\uFE0E", "r": "\u2715\uFE0E", "b": "\u25CB\uFE0E"}   # MP-1627 mono text-style glyphs: ok, warn, fail, info; no colour emoji
 #: family id -> (monochrome glyph, CAPS English tag); MP-1563 cyberpunk text cards
 TAGS = {"p0": ("\u231D", "P0 // ALARM"), "lights": ("\u2301", "LIGHTS // GRID"), "jobs": ("\u25B8", "JOBS // FEED"),
         "wallet": ("\u26D3", "WALLET // MOVE"), "smm-approval": ("\u25E2", "SMM // APPROVAL"), "smm-alert": ("\u25E4", "SMM // ALERT"),
         "tcb": ("\u2593", "TCB // WATCH"), "heuristics": ("\u27E6\u27E7", "HEUR // LAUNCH"), "owner-queue": ("\u2592", "OQ // QUEUE"),
         "sensor-red": ("\u2591", "SENSOR // RED"), "eth-forecast": ("\u25B2", "ETH // FORECAST"),
         "opps": ("\u25C8", "OPPS // FEED")}
+FAMICON = {"lights": "\u2301\uFE0E", "jobs": "\u25C7\uFE0E", "eth-forecast": "\u25B3\uFE0E", "digest": "\u2261\uFE0E", "ads": "\u00A4\uFE0E", "health": "+\uFE0E",
+           "p0": "\u25C6\uFE0E", "wallet": "\u25C8\uFE0E", "owner-queue": "\u2261\uFE0E", "opps": "\u25C8\uFE0E",
+           "heuristics": "\u2318\uFE0E", "sensor-red": "\u25CC\uFE0E", "smm-alert": "\u270E\uFE0E", "smm-approval": "\u270E\uFE0E", "tcb": "\u25A3\uFE0E"}   # MP-1627 mono family icons
+ALERT_FAMILIES = {"sensor-red", "p0", "smm-alert"}   # the only families that may show red (owner 20 Nov 2026)
+ALERT_RED = "\U0001F534"
+SUBJ_RU = {"p0": "\u0422\u0440\u0435\u0432\u043e\u0433\u0430 P0", "lights": "\u0421\u0432\u0435\u0442 \u0438 \u0433\u0440\u0430\u0444\u0438\u043a\u0438",
+           "jobs": "\u0412\u0430\u043a\u0430\u043d\u0441\u0438\u0438", "wallet": "\u0414\u0432\u0438\u0436\u0435\u043d\u0438\u044f \u043a\u043e\u0448\u0435\u043b\u044c\u043a\u043e\u0432",
+           "smm-approval": "\u0421\u043e\u0433\u043b\u0430\u0441\u043e\u0432\u0430\u043d\u0438\u0435 \u043f\u043e\u0441\u0442\u043e\u0432", "smm-alert": "\u0422\u0440\u0435\u0432\u043e\u0433\u0430 \u0440\u0435\u043a\u043b\u0430\u043c\u044b",
+           "tcb": "\u0421\u043b\u0435\u0436\u0435\u043d\u0438\u0435 TCB", "heuristics": "\u0417\u0430\u043f\u0443\u0441\u043a \u044d\u0432\u0440\u0438\u0441\u0442\u0438\u043a",
+           "owner-queue": "\u041e\u0447\u0435\u0440\u0435\u0434\u044c \u0432\u043b\u0430\u0434\u0435\u043b\u044c\u0446\u0430", "sensor-red": "\u0414\u0430\u0442\u0447\u0438\u043a\u0438, \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430",
+           "eth-forecast": "\u041f\u0440\u043e\u0433\u043d\u043e\u0437 ETH", "opps": "\u0421\u0432\u043e\u0434\u043a\u0430 \u0432\u043e\u0437\u043c\u043e\u0436\u043d\u043e\u0441\u0442\u0435\u0439"}
 BSTYLE = {"p": "success", "d": "danger", "s": "primary"}   # Bot API button style; MP-1577 phone-width cards
 BTN = {"p": "\u2713", "s": "\u23F8", "d": "\u2715", "l": "\u2197"}
 
@@ -282,8 +292,9 @@ def _one(x, n: int = 44) -> str:
     return t if len(t) <= n else t[: n - 1] + "\u2026"
 
 
-def _pre(lines, lang: str = "ini") -> str:
-    return f'<pre><code class="language-{lang}">' + "\n".join(_esc(x) for x in lines) + "</code></pre>"
+def _pre(lines, lang: str = "") -> str:
+    """MP-1627: plain <pre>, no language attribute (a language makes the client syntax-colour it)."""
+    return "<pre>" + "\n".join(_esc(x) for x in lines) + "</pre>"
 
 
 def render_text(f: dict, d: dict, caption: str, preview: bool) -> tuple[str, dict | None]:
@@ -293,13 +304,17 @@ def render_text(f: dict, d: dict, caption: str, preview: bool) -> tuple[str, dic
     t timeline, x buttons; optional tag, bar [pct], bar_lbl, arrow. Button kinds: p/s/d callback (success/primary/danger), l url, c copy_text (no icon)."""
     chip = d.get("c") or ["b", ""]
     fid = str(f.get("id") or "")
-    tag = str(d.get("tag") or TAGS.get(fid, ("", fid.upper() or "ALERT"))[1]).split(" // ")[0]
+    # MP-1627 v3: first line names the subject in plain Russian (subj override, else SUBJ_RU); red only for real alert families
+    tag = str(d.get("subj") or SUBJ_RU.get(fid) or TAGS.get(fid, ("", fid.upper() or "ALERT"))[1].split(" // ")[0])
     tag = ("TEST " if preview else "") + tag
     ctext = str(chip[1]) if len(chip) > 1 and chip[1] else ""
-    tag = _one(tag, 19)
-    head = f"{MARK.get(chip[0], MARK['b'])} <b>{_esc(tag)}</b>"
-    if ctext and 19 - len(tag) >= 2:
-        head += f" <i>{_esc(_one(ctext, 19 - len(tag)))}</i>"
+    tag = _one(tag, 24)
+    icon = FAMICON.get(fid, "\u25AA\uFE0E")
+    ck = chip[0]
+    mark = ALERT_RED if (ck == "r" and fid in ALERT_FAMILIES) else MARK["a"] if ck == "r" else MARK.get(ck, MARK["b"])
+    head = f"{mark} <b>{_esc(icon)} {_esc(tag)}</b>"
+    if ctext and 32 - len(tag) >= 4:
+        head += f" <i>{_esc(_one(ctext, 32 - len(tag)))}</i>"
     out = [head]
     pre_rows, codes, sched = [], [], []
     wv = str(d.get("w") or "")
@@ -315,9 +330,9 @@ def render_text(f: dict, d: dict, caption: str, preview: bool) -> tuple[str, dic
         d = dict(d, w="; ".join(notes))
     ks = [(str(k[0]), str(k[1])) for k in d.get("k") or [] if len(k) > 1 and k[1]]
     kw = min(8, max((len(_one(a, 8)) for a, _ in ks), default=0))
-    for a, v in ks[:5]:
+    for a, v in ks[:6]:
         v = " ".join(v.split())
-        if kw + 3 + len(v) <= 22:
+        if kw + 3 + len(v) <= 32:
             pre_rows.append(f"{_one(a, 8):<{kw}} = {v}")
         else:
             codes.append(f"{_one(a, 8)} {_one(v, 40)}")
@@ -333,8 +348,8 @@ def render_text(f: dict, d: dict, caption: str, preview: bool) -> tuple[str, dic
     if d.get("arrow"):
         codes.insert(0, ("\u25B2" if d["arrow"] == "up" else "\u25BC") + (" " + _one(d.get("arrow_txt", ""), 30) if d.get("arrow_txt") else ""))
     codes += sched
-    # MP-1580 (owner 18 Nov 2026): at most 4 visible lines (head + key numbers); everything else under the expandable cut
-    budget = 3 - ((1 + bool(d.get("bar_lbl"))) if d.get("bar") is not None else 0)
+    # MP-1580 (owner 18 Nov 2026): 7-10 visible lines before the cut (v3, owner 20 Nov): head + budget 9; everything else under the expandable cut
+    budget = 9 - ((1 + bool(d.get("bar_lbl"))) if d.get("bar") is not None else 0)
     budget = max(budget, 1)
     shown_pre = pre_rows[:budget]
     hidden = [r.replace(" = ", " ", 1) for r in pre_rows[budget:]]
@@ -346,7 +361,7 @@ def render_text(f: dict, d: dict, caption: str, preview: bool) -> tuple[str, dic
     if hidden:
         out.append("<blockquote expandable>" + "\n".join(_esc(c) for c in hidden) + "</blockquote>")
     if d.get("bar") is not None:
-        out.append(_pre([_one(d.get("bar_lbl"), 22)] * bool(d.get("bar_lbl")) + [bar(d["bar"])], "css"))
+        out.append(_pre([_one(d.get("bar_lbl"), 32)] * bool(d.get("bar_lbl")) + [bar(d["bar"])]))
     kb, row = [], []
     for b in d.get("x") or []:
         st = b[2] if len(b) > 2 else "s"
