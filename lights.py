@@ -361,6 +361,7 @@ def send(st: dict, text: str, dry: bool, data: dict | None = None, sound: bool =
         return True
     if data is None:
         data = {"f": f"Свет, очередь {QUEUE}", "c": ["b", ""], "w": text}
+    data.setdefault("x", [["Обновить", "lt:rf", "s"]])  # owner 23 Nov: refresh button on every message
     try:
         r = _sink().send("lights", data, "", state_dir=STATE_DIR, mode="" if sound else "panel")
     except Exception as e:
