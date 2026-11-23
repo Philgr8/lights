@@ -557,7 +557,9 @@ def refresh() -> int:
         return 1
     today = now().date().isoformat()
     days = [(d, v) for d, v in sorted(cons.items()) if d >= today]
-    return 0 if send(load(), "", False, std_data(["b", "график"], days) if days else {"f": f"Свет, очередь {QUEUE}", "c": ["a", "нет данных"], "w": "Нет данных на сегодня"}) else 1
+    # owner 23 Nov: a refresh must be visible: a NEW message with the time, not a silent edit of an unchanged panel
+    chip = ["b", f"обновлено {now():%H:%M}"]
+    return 0 if send(load(), "", False, std_data(chip, days) if days else {"f": f"Свет, очередь {QUEUE}", "c": ["a", "нет данных"], "w": "Нет данных на сегодня"}, sound=True) else 1
 
 
 def main() -> int:
