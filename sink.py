@@ -258,16 +258,14 @@ def callback_data(req: str) -> str:
     return cb.encode()[:64].decode("utf-8", "ignore")
 
 
-MARK = {"g": "\u25CF\uFE0E", "a": "\u25D0\uFE0E", "r": "\u2715\uFE0E", "b": "\u25CB\uFE0E"}   # MP-1627 mono text-style glyphs: ok, warn, fail, info; no colour emoji
+MARK = {"g": "\U0001F7E2", "a": "\U0001F7E1", "r": "\U0001F534", "b": "\U0001F7E3"}   # owner 23 Nov 2026: colour marks, red allowed everywhere
 #: family id -> (monochrome glyph, CAPS English tag); MP-1563 cyberpunk text cards
 TAGS = {"p0": ("\u231D", "P0 // ALARM"), "lights": ("\u2301", "LIGHTS // GRID"), "jobs": ("\u25B8", "JOBS // FEED"),
         "wallet": ("\u26D3", "WALLET // MOVE"), "smm-approval": ("\u25E2", "SMM // APPROVAL"), "smm-alert": ("\u25E4", "SMM // ALERT"),
         "tcb": ("\u2593", "TCB // WATCH"), "heuristics": ("\u27E6\u27E7", "HEUR // LAUNCH"), "owner-queue": ("\u2592", "OQ // QUEUE"),
         "sensor-red": ("\u2591", "SENSOR // RED"), "eth-forecast": ("\u25B2", "ETH // FORECAST"),
         "opps": ("\u25C8", "OPPS // FEED")}
-FAMICON = {"lights": "\u2301\uFE0E", "jobs": "\u25C7\uFE0E", "eth-forecast": "\u25B3\uFE0E", "digest": "\u2261\uFE0E", "ads": "\u00A4\uFE0E", "health": "+\uFE0E",
-           "p0": "\u25C6\uFE0E", "wallet": "\u25C8\uFE0E", "owner-queue": "\u2261\uFE0E", "opps": "\u25C8\uFE0E",
-           "heuristics": "\u2318\uFE0E", "sensor-red": "\u25CC\uFE0E", "smm-alert": "\u270E\uFE0E", "smm-approval": "\u270E\uFE0E", "tcb": "\u25A3\uFE0E"}   # MP-1627 mono family icons
+FAMICON = {"lights": "\u26a1", "jobs": "\U0001f9be", "wallet": "\U0001fa99", "p0": "\U0001f6a8", "smm-alert": "\U0001f4e2", "smm-approval": "\U0001f5f3\ufe0f", "tcb": "\U0001f6f0\ufe0f", "heuristics": "\U0001f9ec", "owner-queue": "\U0001f39b\ufe0f", "sensor-red": "\U0001f4df", "eth-forecast": "\U0001f52e", "opps": "\U0001f48e", "digest": "\U0001f4be", "ads": "\U0001f4fa", "health": "\U0001fa7a"}   # owner 23 Nov 2026 (table by base): colour cyberpunk emoji, one per family
 ALERT_FAMILIES = {"sensor-red", "p0", "smm-alert"}   # the only families that may show red (owner 20 Nov 2026)
 ALERT_RED = "\U0001F534"
 SUBJ_RU = {"p0": "\u0422\u0440\u0435\u0432\u043e\u0433\u0430 P0", "lights": "\u0421\u0432\u0435\u0442 \u0438 \u0433\u0440\u0430\u0444\u0438\u043a\u0438",
@@ -277,7 +275,7 @@ SUBJ_RU = {"p0": "\u0422\u0440\u0435\u0432\u043e\u0433\u0430 P0", "lights": "\u0
            "owner-queue": "\u041e\u0447\u0435\u0440\u0435\u0434\u044c \u0432\u043b\u0430\u0434\u0435\u043b\u044c\u0446\u0430", "sensor-red": "\u0414\u0430\u0442\u0447\u0438\u043a\u0438, \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430",
            "eth-forecast": "\u041f\u0440\u043e\u0433\u043d\u043e\u0437 ETH", "opps": "\u0421\u0432\u043e\u0434\u043a\u0430 \u0432\u043e\u0437\u043c\u043e\u0436\u043d\u043e\u0441\u0442\u0435\u0439"}
 BSTYLE = {"p": "success", "d": "danger", "s": "primary"}   # Bot API button style; MP-1577 phone-width cards
-BTN = {"p": "\u2713", "s": "\u23F8", "d": "\u2715", "l": "\u2197"}
+BTN = {"p": "\u2705", "s": "\u23F8\uFE0F", "d": "\u274C", "l": "\U0001F517"}
 
 
 def bar(pct, n: int = 10) -> str:
@@ -309,9 +307,9 @@ def render_text(f: dict, d: dict, caption: str, preview: bool) -> tuple[str, dic
     tag = ("TEST " if preview else "") + tag
     ctext = str(chip[1]) if len(chip) > 1 and chip[1] else ""
     tag = _one(tag, 24)
-    icon = FAMICON.get(fid, "\u25AA\uFE0E")
+    icon = FAMICON.get(fid, "\U0001F539")
     ck = chip[0]
-    mark = ALERT_RED if (ck == "r" and fid in ALERT_FAMILIES) else MARK["a"] if ck == "r" else MARK.get(ck, MARK["b"])
+    mark = MARK.get(ck, MARK["b"])
     head = f"{mark} <b>{_esc(icon)} {_esc(tag)}</b>"
     if ctext and 32 - len(tag) >= 4:
         head += f" <i>{_esc(_one(ctext, 32 - len(tag)))}</i>"
@@ -368,7 +366,7 @@ def render_text(f: dict, d: dict, caption: str, preview: bool) -> tuple[str, dic
         if st == "c":
             btn = {"text": str(b[0])[:24], "copy_text": {"text": str(b[1])[:256]}}
         else:
-            ic = "↻" if str(b[0]).lower().startswith(("refresh", "обновить")) else BTN.get(st, chr(0x25B8))
+            ic = "🔄" if str(b[0]).lower().startswith(("refresh", "обновить")) else BTN.get(st, "\u25B6\uFE0F")
             btn = {"text": f"{ic} {str(b[0])[:24]}"}
             if st == "l":
                 btn["url"] = b[1]

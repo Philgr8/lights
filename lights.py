@@ -40,6 +40,7 @@ URLS = {
     "alerts": "https://alerts.energy/odeska-oblast",
     "svitlo": "https://svitlo.live/chornomorsk",
     "tg": "https://t.me/s/chornomorsk_svitlo",
+    "dtek": "https://www.dtek-oem.com.ua/ua/shutdowns",
 }
 
 
@@ -149,6 +150,26 @@ def parse_svitlo(page: str) -> dict:
     return out
 
 
+def parse_dtek(page: str) -> dict:
+    """DTEK Odesa Electric Networks (the operator, owner 23 Nov 2026). The shutdowns page embeds the fact table of every
+    queue as JS: DisconSchedule.fact = {"data": {<day epoch>: {"GPV<queue>": {"1".."24": yes|no|first|second}}}}.
+    Plain GET, no POST. Checked 23 Nov: Chornomorsk, Radisna 21A = GPV1.1, intervals equal to the other three sites."""
+    i = page.find("DisconSchedule.fact = ")
+    if i < 0:
+        raise ValueError("dtek: fact block missing")
+    fact, _ = json.JSONDecoder().raw_decode(page[i + len("DisconSchedule.fact = "):])
+    m = {"yes": "00", "no": "11", "first": "10", "second": "01"}
+    out = {}
+    for epoch, queues in fact["data"].items():
+        hrs = queues.get(f"GPV{QUEUE}")
+        if hrs and len(hrs) == 24 and all(hrs.get(str(h)) in m for h in range(1, 25)):
+            day = dt.datetime.fromtimestamp(int(epoch), KYIV).date().isoformat()
+            out[day] = "".join(m[hrs[str(h)]] for h in range(1, 25))
+    if not out:
+        raise ValueError("dtek: queue block missing")
+    return out
+
+
 UA_MONTHS = {m: i for i, m in enumerate(
     "січня лютого березня квітня травня червня липня серпня вересня жовтня листопада грудня".split(), 1)}
 
@@ -182,7 +203,7 @@ def parse_tg(page: str) -> dict:
     return out
 
 
-PARSERS = {"bezsvitla": parse_bezsvitla, "alerts": parse_alerts, "svitlo": parse_svitlo, "tg": parse_tg}
+PARSERS = {"bezsvitla": parse_bezsvitla, "alerts": parse_alerts, "svitlo": parse_svitlo, "tg": parse_tg, "dtek": parse_dtek}
 
 
 def fetch_all() -> tuple[dict, dict]:
