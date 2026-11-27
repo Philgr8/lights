@@ -4,7 +4,7 @@
 Sources (public pages, parsed by script): bezsvitla.com.ua, alerts.energy (oblenergo entry), svitlo.live.
 Each source yields {date: 48 half-hour slots, '1' = no power}; the consensus is a slot-wise majority.
 
-  lights.py tick [--dry]   one pass (systemd timer, every 30 min): changes, reminders, morning summary
+  lights.py tick [--dry]   one pass (systemd timer, every 30 min): a new message on change, nothing otherwise
   lights.py show           print each source and the consensus, send nothing
   lights.py test           send one test line
 
@@ -31,8 +31,6 @@ UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chr
 WARN_OFF_MIN = 45     # reminder before an outage (owner 8 Nov 2026: 45, ticks at :15/:45 so GitHub cron lag up to ~30 min still hits it)
 WARN_ON_MIN = 45      # reminder before power returns (>= TICK_MIN or it is skipped; 45 with WARN_OFF_MIN)
 TICK_MIN = 30         # lights.timer period (owner 7 Nov 2026: 30 min, was 5)
-MORNING = dt.time(9, 0)
-EVENING = dt.time(20, 0)
 FAIL_ALERT = 3        # consecutive all-source failures before one alert
 
 URLS = {
@@ -356,7 +354,7 @@ def std_data(chip: list, days: list, note: str = "", x: bool = False, today_iso:
 
 
 def panel_data(sched: dict, t: dt.datetime, note: str = "") -> dict:
-    """Pinned live panel: state chip + today (and tomorrow) in the standard layout."""
+    """State card: state chip + today (and tomorrow) in the standard layout."""
     today, tm = t.date(), t.date() + dt.timedelta(days=1)
     off_now = any(a <= t < b for a, b in abs_outages(sched, today))
     soon = [(a - t).total_seconds() / 60 for a, b in abs_outages(sched, today) if t < a]
@@ -381,9 +379,9 @@ def change_data(chg: dict, t: dt.datetime) -> dict:
     return std_data(["r", "изменения"], [(d, future_slots(new, t) if d == ti and new else new) for d, (was, new) in sorted(chg.items())], today_iso=ti)
 
 
-def send(st: dict, text: str, dry: bool, data: dict | None = None, sound: bool = False) -> bool:
-    """Everything goes through the sink to the owner's private chat. sound=True: a NEW sounding message
-    (schedule change). Otherwise a silent edit of the pinned panel; unchanged panel = nothing sent."""
+def send(st: dict, text: str, dry: bool, data: dict | None = None) -> bool:
+    """Everything goes through the sink to the owner's private chat, ALWAYS as a new message (owner 27 Nov 2026:
+    any update = a new message, no update = nothing). Never a panel edit; callers send only when something is new."""
     if dry:
         log(f"dry: {text[:80]!r}")
         return True
@@ -391,41 +389,12 @@ def send(st: dict, text: str, dry: bool, data: dict | None = None, sound: bool =
         data = {"f": f"Свет, очередь {QUEUE}", "c": ["b", ""], "w": text}
     data.setdefault("x", [["Обновить", "lt:rf", "s"]])  # owner 23 Nov: refresh button on every message
     try:
-        r = _sink().send("lights", data, "", state_dir=STATE_DIR, mode="" if sound else "panel")
+        r = _sink().send("lights", data, "", state_dir=STATE_DIR)
     except Exception as e:
         log(f"send failed: {type(e).__name__}: {str(e)[:120]}")
         return False
     log(f"{r.get('action')}: {text[:80]!r}")
     return True
-
-
-def once(st: dict, key: str, text: str, dry: bool) -> None:
-    if key in st["sent"]:
-        return
-    if send(st, text, dry):
-        st["sent"][key] = now().isoformat(timespec="seconds")
-
-
-def day_label(d: str, today: dt.date) -> str:
-    dd = dt.date.fromisoformat(d)
-    word = "сегодня" if dd == today else "завтра" if dd == today + dt.timedelta(days=1) else ""
-    return f"{word} {dd:%d.%m}".strip()
-
-
-def span(a: dt.datetime, b: dt.datetime) -> str:
-    """'23:00-24:00' like column(), not '23:00-00:00', when the outage ends at midnight."""
-    end = "24:00" if b.time() == dt.time(0) and b.date() > a.date() else f"{b:%H:%M}"
-    return f"{a:%H:%M}-{end}"
-
-
-def next_outage_line(sched: dict, t: dt.datetime) -> str:
-    for a, b in abs_outages(sched, t.date()):
-        if a <= t < b:
-            return f"По графику сейчас света нет, вернут в {b:%H:%M}."
-        if a > t:
-            when = "" if a.date() == t.date() else " завтра"
-            return f"Следующее отключение{when} {span(a, b)}."
-    return "Отключений по графику больше нет."
 
 
 # ---------- the tick ----------
@@ -441,11 +410,10 @@ def tick(dry: bool) -> int:
         if _sink().whoami():  # prints bot name and set/missing only
             sys.exit("[FATAL] bot token or owner chat env missing/wrong")
     st = load()
-    st.setdefault("sched", {}); st.setdefault("sent", {}); st.setdefault("fail", 0)
+    st.setdefault("sched", {}); st.setdefault("fail", 0)
     t = now()
     today = t.date()
     tomorrow = today + dt.timedelta(days=1)
-    q = f"очередь {QUEUE}"
 
     res, errs = fetch_all()
     for name, e in errs.items():
@@ -464,88 +432,47 @@ def tick(dry: bool) -> int:
         if not a.startswith(a.split("/")[1]):
             log(f"sources disagree for {d}: {a}; " + ", ".join(f"{n}={describe(r[d])}" for n, r in res.items() if d in r))
 
-    # Message layout (owner 8 Nov 2026, after two corrections):
-    #  - at most ONE schedule message per tick: a change (⚠️, full schedule of both days) replaces the
-    #    morning/evening summary of that tick; day blocks are '☀️ Сегодня 08.11:' + one interval per line,
-    #    separated by a blank line; no totals, no 'next outage' line (it repeats the list);
-    #  - reminders (🔌 / 💡) go as their own message;
-    #  - no 'runner back online' message (owner: useless). Keys and the new schedule are committed only
-    #    after a successful send, so a failed send retries whole next tick.
+    # owner 27 Nov 2026: any update (on/off, newly published day, changed visible schedule) = ONE new message;
+    # nothing new = no send and no edit. There is no separate morning/evening summary: it could only repeat what
+    # was already sent. The new schedule is committed only after a successful send, so a failed send retries.
     first_run = not st["sched"]
-    upd, changed = {}, {}   # date -> new slots; date -> (was_published_before, key)
+    upd, changed = {}, {}   # date -> new slots; date -> was published before
     for d in (today.isoformat(), tomorrow.isoformat()):
         new, old = cons.get(d), st["sched"].get(d)
         if new and new != old:
             upd[d] = new   # adopted even when nothing visible changed (silently)
             if old is not None and visible(d, new, t) == visible(d, old, t):
                 continue
-            changed[d] = (old is not None, f"chg:{d}:{hashlib.sha1(new.encode()).hexdigest()[:10]}")
+            changed[d] = old is not None
     sched = {**st["sched"], **upd}
 
-    td, tm = sched.get(today.isoformat()), sched.get(tomorrow.isoformat())
-
-    def block(d: dt.date, word: str, slots, missing: str, suffix: str = "") -> str:
-        mark = " (изменился)" if changed.get(d.isoformat(), (False,))[0] else ""
-        return f"☀️ {word} {d:%d.%m}{suffix}{mark}:\n" + (column(slots) if slots else missing)
-
-    def both_days(suffix: str = "") -> str:
-        out = [block(today, "Сегодня", td, "график не опубликован", suffix)]
-        if tm:
-            out.append(block(tomorrow, "Завтра", tm, ""))
-        return "\n\n".join(out)
-
-    msg, keys = None, []
-    morning_due = t.time() >= MORNING and t.hour < 13 and f"morning:{today}" not in st["sent"]
-    evening_due = t.time() >= EVENING and f"evening:{today}" not in st["sent"]
+    ok = False   # a schedule message went out this tick
     if changed:
-        if first_run:
-            top = f"✅ Слежу за светом ({q}, Чорноморськ)"
-        elif any(was for was, _ in changed.values()):
-            top = f"⚠️ Изменился график отключений ({q})"
+        if not first_run and any(changed.values()):
+            data = change_data({d: (st["sched"].get(d), upd[d]) for d in changed}, t)
         else:
-            top = f"📅 Опубликован график ({q})"
-        msg = top + "\n\n" + both_days()
-        keys = [k for _, k in changed.values()]
-        keys += [f"morning:{today}"] * morning_due + [f"evening:{today}"] * evening_due  # this replaces the summary
-    elif morning_due:
-        msg, keys = both_days(f" ({q})"), [f"morning:{today}"]
-    elif evening_due:
-        msg = f"🌙 Вечер {today:%d.%m} ({q}). " + next_outage_line(sched, t) + "\n\n" \
-            + block(tomorrow, "Завтра", tm, "график ещё не опубликован")
-        keys = [f"evening:{today}"]
-    chg = {d: (st["sched"].get(d), upd[d]) for d in changed}
-    sounding = bool(changed) and not first_run and any(was for was, _ in changed.values())
-    if msg is None:
-        ok = True
-    elif sounding:   # a schedule change: a NEW sounding message, then the pinned panel follows silently
-        cdata = change_data(chg, t)
-        ok = send(st, "", dry, cdata, sound=True)   # ONE message (owner 11 Nov); the pinned panel refreshes silently on the next tick
-    else:
-        ok = send(st, msg, dry, panel_data(sched, t))
-    if ok:
-        for k in keys:
-            st["sent"][k] = t.isoformat(timespec="seconds")
+            data = panel_data(sched, t)   # first run or a newly published day
+        ok = send(st, data.get("subj", ""), dry, data)
+    if ok or not changed:
         st["sched"].update(upd)
 
     # owner 20 Nov 2026: a new message only when the on/off state or the schedule lines change; the countdown is never part of the key
     off_now = any(x <= t < y for x, y in abs_outages(sched, today))
     rdata = panel_data(sched, t)
     key = f"{int(off_now)}|{sched.get(today.isoformat(), '')}|{sched.get(tomorrow.isoformat(), '')}"
-    if sounding or (msg is not None and ok):
-        st["card_key"] = key   # the card just sent already shows this state
-    elif "card_key" not in st:
-        st["card_key"] = key   # first run of this rule: adopt the current state silently
-    elif card_visible(st["card_key"], today, t) != card_visible(key, today, t):
-        if send(st, rdata.get("subj", ""), dry, rdata, sound=True):
-            st["card_key"] = key
-    else:
-        st["card_key"] = key
+    new_card = False
+    if not ok and "card_key" in st:   # first run of this rule adopts the current state silently
+        prev = st["card_key"]
+        if st.get("card_day", st.get("last_tick", "")[:10]) == (today - dt.timedelta(days=1)).isoformat():
+            off, _, tm_prev = prev.split("|")
+            prev = f"{off}|{tm_prev}|"   # midnight: yesterday's 'tomorrow' is today's schedule, already shown
+        new_card = card_visible(prev, today, t) != card_visible(key, today, t)
+    if not new_card or send(st, rdata.get("subj", ""), dry, rdata):
+        st["card_key"], st["card_day"] = key, today.isoformat()
 
     # keep state small
     keep = {(today + dt.timedelta(days=k)).isoformat() for k in (-1, 0, 1)}
     st["sched"] = {d: s for d, s in st["sched"].items() if d in keep}
-    cutoff = (t - dt.timedelta(days=3)).isoformat()
-    st["sent"] = {k: v for k, v in st["sent"].items() if v >= cutoff}
     st["last_tick"] = t.isoformat(timespec="seconds")
     if not dry:
         save(st)
@@ -576,7 +503,7 @@ def refresh() -> int:
     days = [(d, v) for d, v in sorted(cons.items()) if d >= today]
     # owner 23 Nov: a refresh must be visible: a NEW message with the time, not a silent edit of an unchanged panel
     chip = ["b", f"обновлено {now():%H:%M}"]
-    return 0 if send(load(), "", False, std_data(chip, days) if days else {"f": f"Свет, очередь {QUEUE}", "c": ["a", "нет данных"], "w": "Нет данных на сегодня"}, sound=True) else 1
+    return 0 if send(load(), "", False, std_data(chip, days) if days else {"f": f"Свет, очередь {QUEUE}", "c": ["a", "нет данных"], "w": "Нет данных на сегодня"}) else 1
 
 
 def main() -> int:
