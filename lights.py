@@ -329,6 +329,13 @@ def future_slots(slots: str, t: dt.datetime) -> str:
     return "".join(out)
 
 
+def visible(d: str, slots: str, t: dt.datetime) -> str:
+    """Compare key of one day = what a message would show at t. 27 Nov 2026: the consensus flapped between two
+    variants differing only in an already ended half hour, so four identical change alerts went out. Both sides of a
+    comparison go through this at the same t; the stored schedule stays untrimmed."""
+    return future_slots(slots, t) if slots and d == t.date().isoformat() else slots
+
+
 def std_data(chip: list, days: list, note: str = "", x: bool = False, today_iso: str = "", subj: str = "") -> dict:
     """THE one message layout (owner 11 Nov 2026): title 'Свет, очередь N' + status, then per day the date
     (dd.mm) and one interval per line; days separated by a blank line; an optional note line on top."""
@@ -423,6 +430,12 @@ def next_outage_line(sched: dict, t: dt.datetime) -> str:
 
 # ---------- the tick ----------
 
+def card_visible(key: str, today: dt.date, t: dt.datetime) -> str:
+    """card_key 'off|today|tomorrow' with the today part cut to what is still shown at t."""
+    off, td, tm = key.split("|")
+    return f"{off}|{visible(today.isoformat(), td, t)}|{tm}"
+
+
 def tick(dry: bool) -> int:
     if not dry:
         if _sink().whoami():  # prints bot name and set/missing only
@@ -463,7 +476,9 @@ def tick(dry: bool) -> int:
     for d in (today.isoformat(), tomorrow.isoformat()):
         new, old = cons.get(d), st["sched"].get(d)
         if new and new != old:
-            upd[d] = new
+            upd[d] = new   # adopted even when nothing visible changed (silently)
+            if old is not None and visible(d, new, t) == visible(d, old, t):
+                continue
             changed[d] = (old is not None, f"chg:{d}:{hashlib.sha1(new.encode()).hexdigest()[:10]}")
     sched = {**st["sched"], **upd}
 
@@ -498,7 +513,7 @@ def tick(dry: bool) -> int:
         msg = f"🌙 Вечер {today:%d.%m} ({q}). " + next_outage_line(sched, t) + "\n\n" \
             + block(tomorrow, "Завтра", tm, "график ещё не опубликован")
         keys = [f"evening:{today}"]
-    chg = {d: (st["sched"].get(d), upd[d]) for d in upd}
+    chg = {d: (st["sched"].get(d), upd[d]) for d in changed}
     sounding = bool(changed) and not first_run and any(was for was, _ in changed.values())
     if msg is None:
         ok = True
@@ -520,9 +535,11 @@ def tick(dry: bool) -> int:
         st["card_key"] = key   # the card just sent already shows this state
     elif "card_key" not in st:
         st["card_key"] = key   # first run of this rule: adopt the current state silently
-    elif st["card_key"] != key:
+    elif card_visible(st["card_key"], today, t) != card_visible(key, today, t):
         if send(st, rdata.get("subj", ""), dry, rdata, sound=True):
             st["card_key"] = key
+    else:
+        st["card_key"] = key
 
     # keep state small
     keep = {(today + dt.timedelta(days=k)).isoformat() for k in (-1, 0, 1)}
